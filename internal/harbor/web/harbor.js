@@ -80,6 +80,7 @@ const state = {
   logQuery: "", // the log toolbar's text filter, matched case-insensitively
   storageFailed: false, // the store read failed: the storage panel says so
   lastSeq: 0,
+  vmFirstSeen: 0, // first poll that read the card as passthrough, for the gap the event ring did not keep
   demoHist: null, // ?demo: the recorded 1 h window the longer ranges are synthesized from
   boardSort: null, // departures board sort: null | "vessel" | "hold" | "status" | "time"
   alertSeen: {}, // key -> first-seen ms, so a sticky alert names its age
@@ -123,7 +124,7 @@ function initialLbRange() {
 }
 
 let board, ticket, engineView, residency, priorityView, libraryView;
-let connPill, statePill, nodeVersion, lastUpdate, demoStrip, alertStripEl;
+let connPill, statePill, vmPill, nodeVersion, lastUpdate, demoStrip, alertStripEl;
 let odometerReels, counterSince, counterMeta;
 let ctiles;
 let logList, logNote, logMeta, refusalTallyEl, logCountEl, logWrapEl, logJumpEl, logSearchInput;
@@ -147,6 +148,7 @@ let histSeries = {}; // precomputed per-history sparkline series
 function main() {
   connPill = $("conn-pill");
   statePill = $("state-pill");
+  vmPill = $("vm-pill");
   alertStripEl = $("alerts");
   nodeVersion = $("node-version");
   lastUpdate = $("last-update");
@@ -749,7 +751,25 @@ function paintConnAge() {
 function refreshConn() {
   setConn();
   paintOverall();
+  paintVM();
   paintLastUpdate();
+}
+// The VM tag: the governed card is not on the node, it is bound to vfio-pci or
+// switching to or from that. It reads beside the state pill on every tab, so
+// the card's absence is visible without opening a panel. Hidden when the node
+// reports no passthrough.
+let vmSig = null;
+function paintVM() {
+  const p = state.status && state.status.passthrough;
+  const sig = p ? p.state + "|" + p.driver : "";
+  if (sig === vmSig || !vmPill) return;
+  vmSig = sig;
+  if (!p) { vmPill.hidden = true; return; }
+  vmPill.hidden = false;
+  setText(vmPill, p.state === "detaching" ? "GPU TO VM" : "GPU IN VM");
+  vmPill.title = p.state === "detaching"
+    ? "a VFIO hold is granted and the card's driver is switching, driver " + (p.driver || "unbound")
+    : "the governed card is bound to " + p.driver + " and serves a virtual machine";
 }
 function paintLastUpdate() {
   if (!lastUpdate) return;
@@ -765,18 +785,33 @@ function overallState() {
   if (state.demo) return "demo";
   const c = connState();
   if (c === "down") return "offline";
-  const lv = (state.alerts && state.alerts.levels) || {};
-  const latched = (state.status && state.status.engines || []).some((e) => e.state === "latched");
+  const lv = alertLevels();
+  // While the card is in a VM no engine can hold it, so an engine stopped for
+  // the session is expected, not a fault.
+  const inVM = !!(state.status && state.status.passthrough);
+  const latched = !inVM && (state.status && state.status.engines || []).some((e) => e.state === "latched");
   if (Object.keys(lv).length > 0 || latched) return "degraded";
   if (c === "stale") return "degraded"; // no fresh status within 10 s: not provably live
   return "live";
+}
+// alertLevels is the page's view of the node's sticky levels. While the card is
+// in a VM (or switching to one) its probe failure is the known passthrough
+// state, not a fault, so the probe level reaches neither pill nor strip.
+function alertLevels() {
+  const lv = (state.alerts && state.alerts.levels) || {};
+  if (state.status && state.status.passthrough && lv.probe) {
+    const rest = { ...lv };
+    delete rest.probe;
+    return rest;
+  }
+  return lv;
 }
 // the state pill is a live region too: rebuild it only when the state or its
 // explanation changes, not on every poll
 let stateSig = null;
 function paintOverall() {
   const s = overallState();
-  const lv = (state.alerts && state.alerts.levels) || {};
+  const lv = alertLevels();
   const sorted = alertKeys(lv);
   const title = sorted.length ? alertMsg(sorted[0], lv[sorted[0]], state.status) : "";
   const sig = s + "|" + title;
@@ -808,6 +843,7 @@ async function fetchStatus() {
     } else if (res.ok) {
       state.status = await res.json();
       state.alerts = state.status.alerts || null;
+      state.vmFirstSeen = state.status.passthrough ? (state.vmFirstSeen || Date.now()) : 0;
       state.nodeDown = null;
       state.fetchFailing = false;
       state.lastGood = Date.now();
@@ -1374,7 +1410,8 @@ function paintAlerts(s) {
   const now = Date.now();
   for (const k of Object.keys(lv)) if (!state.alertSeen[k]) state.alertSeen[k] = now;
   for (const k of Object.keys(state.alertSeen)) if (!lv[k]) { delete state.alertSeen[k]; delete state.alertDismissed[k]; }
-  const keys = alertKeys(lv).filter((k) => state.alertDismissed[k] !== lv[k]);
+  const keys = alertKeys(lv).filter((k) =>
+    state.alertDismissed[k] !== lv[k] && !(s.passthrough && k === "probe"));
   const sig = keys.map((k) => k + ":" + lv[k]).join("|") + "#" + keys.map((k) => alertMsg(k, lv[k], s)).join("|");
   if (sig === lastAlertSig) return;
   lastAlertSig = sig;
@@ -1403,6 +1440,42 @@ function paintAlerts(s) {
 }
 
 // ---------------- the tide ----------------
+// The card's windows in a VM: [start, end] pairs in epoch ms, recovered from
+// the node's card events, so the tide draws the session as a gap in the data
+// and never as the frozen last reading. An open window is one with no end:
+// the card is still in the VM right now, or the page saw a passthrough status
+// whose start event has fallen out of the event ring.
+function vmWindows(now) {
+  const out = [];
+  let open = null;
+  for (const ev of state.events) {
+    if (ev.kind === "card.passthrough") {
+      if (open == null) open = new Date(ev.at).getTime();
+    } else if (ev.kind === "card.returned" && open != null) {
+      out.push([open, new Date(ev.at).getTime()]);
+      open = null;
+    }
+  }
+  if (open != null) {
+    out.push([open, now]);
+    return out;
+  }
+  return state.status && state.status.passthrough && state.vmFirstSeen
+    ? [[state.vmFirstSeen, now]]
+    : out;
+}
+function inVmWindow(t, win) {
+  for (const [a, b] of win) if (t >= a && t <= b) return true;
+  return false;
+}
+// The card events' plain words in the log and on the tide's event ticks: the
+// node's own detail is the driver, the word is the state.
+function eventCardText(e) {
+  const g = schedGpu(state.status);
+  const card = g && g.index != null ? "gpu" + g.index : "the card";
+  const bare = e.kind === "card.passthrough";
+  return bare ? card + " passed through to a VM" : card + " back from the VM";
+}
 // The axis reads the current range when it paints, so one chart object
 // serves every range: clock times within a day, short dates for 7d and 30d.
 function xAxisLabel(d) {
@@ -1447,6 +1520,11 @@ function tideSeries(s) {
   const samples = state.history && state.history.samples ? state.history.samples : [];
   const n = samples.length;
   if (!sched || n < 2) return null;
+  // samples inside a VM passthrough window carry the frozen pre-hold reading:
+  // they are holes, not data
+  const win = vmWindows(Date.now());
+  const holes = samples.map((sm) => inVmWindow(new Date(sm.t).getTime(), win));
+  const nHoles = holes.filter(Boolean).length;
   const total = sched.total / GIB;
   const base = (sched.baseline || 0) / GIB;
   const byName = new Map();
@@ -1462,11 +1540,17 @@ function tideSeries(s) {
   const series = [{ label: "baseline", kind: "baseline", color: PAL.baseline, data: new Array(n).fill(base) }];
   names.forEach((eng, i) => series.push({ label: eng, kind: "holder", color: HOLDER_PALETTE[i % HOLDER_PALETTE.length], data: byName.get(eng).data }));
   series.push({ label: "squatter", kind: "squat", color: PAL.rose, data: samples.map((sm) => (sm.squat || 0) / GIB) });
+  if (nHoles) for (const band of series) band.data = band.data.map((v, i) => (holes[i] ? null : v));
   const events = state.events
     .filter((ev) => EVENT_TONE[ev.kind])
     .map((ev) => ({ t: new Date(ev.at).getTime(), tone: EVENT_TONE[ev.kind], kind: ev.kind, engine: ev.engine || "", detail: ev.detail || "" }));
   const t = samples.map((sm) => new Date(sm.t).getTime());
-  return { total, base, t, series, events };
+  // the card events ride the tide too: a hole sticks out, its boundary says why
+  for (const ev of state.events) {
+    if (ev.kind !== "card.passthrough" && ev.kind !== "card.returned") continue;
+    events.push({ t: new Date(ev.at).getTime(), tone: "stuck", kind: kindWord(ev.kind), engine: "", detail: eventCardText(ev) });
+  }
+  return { total, base, t, series, events, holes, nHoles };
 }
 function updateTide(s) {
   buildTide();
@@ -1487,10 +1571,10 @@ function updateTide(s) {
   tideMeta.textContent = meta;
   setAttr(tideChart.el, "aria-label", "scheduled card memory by holder, " + RANGE_WORD[state.range] + ". Focus shows a data point.");
   const lastHolder = data.series[1] ? (data.series[1].data[data.t.length - 1] || 0).toFixed(1) : "0";
-  const sig = data.total + "|" + data.t[0] + "|" + data.t[data.t.length - 1] + "|" + data.series.map((b) => b.label).join(",") + "|" + lastHolder + "|" + data.events.length;
+  const sig = data.total + "|" + data.t[0] + "|" + data.t[data.t.length - 1] + "|" + data.series.map((b) => b.label).join(",") + "|" + lastHolder + "|" + data.events.length + "|" + data.nHoles;
   if (sig === tideChart._sig) { paintTideLegend(data.series); return; }
   tideChart._sig = sig;
-  tideChart.set({ t: data.t, total: data.total, series: data.series, events: data.events });
+  tideChart.set({ t: data.t, total: data.total, series: data.series, events: data.events, holes: data.holes });
   paintTideLegend(data.series);
 }
 function firstSched(s) {
@@ -1693,6 +1777,10 @@ function renderBerths(s) {
 function updateBerth(card, g, s) {
   card.root.classList.toggle("is-scheduled", !!g.scheduled);
   card.root.classList.toggle("inventory", !g.scheduled);
+  // the card in a VM: its status names the state, its figures are the last
+  // probe read before the hold, which the card does not serve now
+  const pt = g.scheduled && s.passthrough ? s.passthrough : null;
+  card.root.classList.toggle("is-vfio", !!pt);
   // the vram level tints the whole card; it comes from the node's sticky
   // levels, never re-derived here
   const alv = (s.alerts && s.alerts.levels) || {};
@@ -1731,12 +1819,24 @@ function updateBerth(card, g, s) {
     if (node.style.width !== w) node.style.width = w;
     if (b.title && node.title !== b.title) node.title = b.title;
   });
-  setNums(card.memnums, [
-    [fmtGiB(g.used) + " / " + fmtGiB(g.total) + " GiB", "USED / TOTAL"],
-    [fmtGiB(g.free) + " GiB", "FREE"],
-    [fmtGiB(g.baseline) + " GiB", "BASELINE"],
-    [fmtAge(g.age_seconds), "READING AGE"],
-  ]);
+  if (pt) {
+    // the passthrough word reads as the card's state in place of the figures;
+    // the last reading keeps its cell, greyed by .is-vfio, labelled as its age
+    const word = pt.state === "detaching"
+      ? "being passed through to a VM" + (pt.driver ? " (driver " + pt.driver + ")" : "")
+      : "passed through to a VM (" + pt.driver + ")";
+    setNums(card.memnums, [
+      [word, "CARD STATE"],
+      [fmtGiB(g.used) + " / " + fmtGiB(g.total) + " GiB", "LAST READING, READ " + fmtAge(g.age_seconds) + " AGO"],
+    ]);
+  } else {
+    setNums(card.memnums, [
+      [fmtGiB(g.used) + " / " + fmtGiB(g.total) + " GiB", "USED / TOTAL"],
+      [fmtGiB(g.free) + " GiB", "FREE"],
+      [fmtGiB(g.baseline) + " GiB", "BASELINE"],
+      [fmtAge(g.age_seconds), "READING AGE"],
+    ]);
+  }
   paintTelemetry(card, g, s);
   // occupants
   card.occ.replaceChildren();
@@ -1751,7 +1851,8 @@ function updateBerth(card, g, s) {
         if (l.parked_since != null) ram += ", parked " + fmtAge(l.parked_since);
       }
       const cls = "occ" + (l.state === "stuck" ? " stuck" : l.state === "parked" ? " warm" : "");
-      card.occ.append(el("div", cls, el("span", "who", tier + " " + l.engine + " " + (l.id || "")), el("span", null, l.state === "parked" ? ram.trim() : l.used > 0 ? fmtGiB(l.used) + " GiB" : "draining")));
+      const sits = l.group === "vfio" ? "in the VM" : l.state === "parked" ? ram.trim() : l.used > 0 ? fmtGiB(l.used) + " GiB" : "draining";
+      card.occ.append(el("div", cls, el("span", "who", tier + " " + l.engine + " " + (l.id || "")), el("span", null, sits)));
     }
     for (const q of s.squatters || []) card.occ.append(el("div", "occ squatter", el("span", "who", "STOWAWAY " + q.name), el("span", null, fmtGiB(q.used) + " GiB")));
     if (card.occ.childElementCount === 0) card.occ.append(el("div", "occ", el("span", "who", "all berths free")));
@@ -1826,17 +1927,28 @@ function updateBerthCharts(s) {
     if (!card.g || !card.g.scheduled) continue;
     card.charts.replaceChildren();
     if (samples.length < 2) { card.charts.append(el("div", "empty-note", "no history yet")); continue; }
-    const pick = (fn) => samples.map((sm) => { const gs = (sm.gpus || []).find((x) => x.index === idx); return gs ? gs[fn] || 0 : 0; });
+    // samples inside a VM passthrough window are no data, never a frozen
+    // reading drawn as if the card answered
+    const win = vmWindows(Date.now());
+    const pick = (fn) => samples.map((sm) => {
+      if (inVmWindow(new Date(sm.t).getTime(), win)) return null;
+      const gs = (sm.gpus || []).find((x) => x.index === idx);
+      return gs ? gs[fn] || 0 : 0;
+    });
     const mk = (label, data, color, unit) => {
       const box = el("div", "mini-chart");
       box.append(el("div", "mc-label", label));
       const c = sparkline(data, { w: 100, h: 22, color, area: true, min: 0, max: maxOf(data) || 1 });
       box.append(c.el);
-      box.append(el("div", "mc-val", fmtNow(data) + unit));
+      box.append(el("div", "mc-val", lastOf(data, unit || "")));
       return box;
     };
     const maxOf = (a) => a.reduce((m, v) => Math.max(m, v || 0), 0);
-    const fmtNow = (a) => { const v = a[a.length - 1] || 0; return v >= 1000 ? (v / 1000).toFixed(1) + "k" : v.toFixed(0); };
+    const lastOf = (a, unit) => {
+      const v = a[a.length - 1];
+      if (v == null) return "no data";
+      return (v >= 1000 ? (v / 1000).toFixed(1) + "k" : v.toFixed(0)) + unit;
+    };
     card.charts.append(mk("UTIL %", pick("util_pct"), PAL.cyan, "%"));
     card.charts.append(mk("TEMP °C", pick("temp_c"), PAL.amber, "°"));
     card.charts.append(mk("POWER W", pick("power_w"), PAL.green, "W"));
@@ -1895,7 +2007,8 @@ function renderMachine(s) {
   setMeter(machineRows.cpu, h.cpu_pct, 100, fmtPct(h.cpu_pct, 1));
   setMeter(machineRows.ram, h.ram_used, h.ram_total, fmtGiB(h.ram_used) + " / " + fmtGiB(h.ram_total) + " GiB");
   if (hasSwap) setMeter(machineRows.swap, h.swap_used, h.swap_total, fmtGiB(h.swap_used) + " / " + fmtGiB(h.swap_total) + " GiB");
-  setText(machineRows.load.val, (h.load || []).map((v) => v.toFixed(2)).join("  "));
+  // Windows reads no load averages: the node leaves them out, and the row says so.
+  setText(machineRows.load.val, na(h.load, (l) => l.map((v) => v.toFixed(2)).join("  ")));
 }
 // The CPU/RAM lines are history-driven and repaint on the heavy gate from
 // renderHeavy, so a status poll never rebuilds them; a poll that reads the
@@ -2112,8 +2225,13 @@ function makeLogRow(e) {
   const at = new Date(e.at);
   const row = el("div", "log-row" + (kindCss(e.kind) ? " " + kindCss(e.kind) : ""));
   const detail = el("span", "ld", e.detail || "");
+  if (e.kind === "card.passthrough" || e.kind === "card.returned") {
+    // the card events speak in plain words; the driver rides in the title
+    detail.textContent = eventCardText(e);
+    detail.title = eventCardText(e) + ", device driver " + (e.detail || "unknown");
+  }
   // the phone's 2-line row ellipsises both words, so the whole of each rides on title
-  detail.title = e.detail || "";
+  detail.title = detail.title || e.detail || "";
   if (e.kind === "lease.juggle") {
     const why = el("button", "log-why", "why");
     why.type = "button";

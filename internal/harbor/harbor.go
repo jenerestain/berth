@@ -119,6 +119,9 @@ func (h *Harbor) Handler() http.Handler {
 	mux.HandleFunc("GET /v1/models", h.libraryHandler)
 	mux.HandleFunc("GET /v1/mode", h.mode)
 	mux.HandleFunc("GET /v1/update", h.update)
+	mux.HandleFunc("GET /v1/me", h.me)
+	mux.HandleFunc("GET /pair", h.pairShow)
+	mux.HandleFunc("POST /pair", h.pairRedeem)
 	return h.guard(mux)
 }
 
@@ -136,8 +139,11 @@ func (h *Harbor) guard(next http.Handler) http.Handler {
 		hd.Set("X-Content-Type-Options", "nosniff")
 		hd.Set("Referrer-Policy", "no-referrer")
 		hd.Set("Cross-Origin-Resource-Policy", "same-origin")
-		if r.Method != http.MethodGet && r.Method != http.MethodHead {
-			apiError(w, http.StatusMethodNotAllowed, "read_only", "the harbor is read-only in this release")
+		// Pairing is the one write so far: its POST checks its own origin.
+		read := r.Method == http.MethodGet || r.Method == http.MethodHead
+		pairing := r.Method == http.MethodPost && r.URL.Path == "/pair"
+		if !read && !pairing {
+			apiError(w, http.StatusMethodNotAllowed, "read_only", "the harbor only reads, apart from pairing a device")
 			return
 		}
 		if h.Mode != ModeLAN && !loopbackHost(r.Host) && !h.allowedHost(r.Host) {

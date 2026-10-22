@@ -20,6 +20,7 @@ import (
 
 	"github.com/T-Crypt/berth/internal/broker"
 	"github.com/T-Crypt/berth/internal/gpu"
+	"github.com/T-Crypt/berth/internal/pair"
 	"github.com/T-Crypt/berth/internal/proto"
 )
 
@@ -110,6 +111,8 @@ type Extras struct {
 	// per sample and the UI repolls more often, so they re-align within
 	// one poll.
 	Alerts func() *proto.Alerts
+	// Pair is the harbor's device pairing; nil turns the OpPair* ops off.
+	Pair *pair.Store
 }
 
 // Serve answers clients on ln.
@@ -178,6 +181,8 @@ func handle(ctx context.Context, c net.Conn, b *broker.Broker, x Extras, log *sl
 		reclaim(conn, log, first, b)
 	case proto.OpStop:
 		stop(conn, log, first, b)
+	case proto.OpPairCode, proto.OpPairRedeem, proto.OpPairCheck, proto.OpPairList, proto.OpPairRevoke:
+		pairing(conn, log, first, x.Pair)
 	case proto.OpResume:
 		resume(conn, log, first, b)
 	case proto.OpEvents:
@@ -250,6 +255,12 @@ func hold(ctx context.Context, conn *proto.Conn, req proto.Msg, b *broker.Broker
 	granted := proto.Msg{Op: proto.OpGranted, Lease: lease.ID()}
 	if c := lease.Contested(); c > 0 {
 		granted.Reason = fmt.Sprintf("card contested: processes without a lease hold %d MiB", c/gpu.MiB)
+	}
+	if shared := lease.ContestedGTT(); shared > 0 {
+		if granted.Reason == "" {
+			granted.Reason = "card contested: processes without a lease hold shared RAM"
+		}
+		granted.Reason += fmt.Sprintf(" (%d MiB GTT)", shared/gpu.MiB)
 	}
 	if !u.send(granted) {
 		return

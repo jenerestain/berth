@@ -50,3 +50,17 @@ func TestLogComfyArmed(t *testing.T) {
 		t.Fatalf("armed log = %q, want the engine name and url", out)
 	}
 }
+
+func TestGPUSelectionValidationPrecedesHardwareAndServiceAccess(t *testing.T) {
+	for _, args := range [][]string{
+		{"daemon", "--gpu-backend", "unknown"},
+		{"daemon", "--gpu", "-1"},
+		{"service", "install", "--gpu-backend", "unknown", "--dry-run"},
+		{"service", "install", "--gpu", "-1", "--dry-run"},
+	} {
+		code, _, errOut := runCLI(t, args...)
+		if code != ExitFail {
+			t.Fatalf("%v: exit %d, stderr %s", args, code, errOut)
+		}
+	}
+}

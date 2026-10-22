@@ -247,6 +247,27 @@ back to, which are worth parking in RAM instead of stopping and reloading. An un
 or an engine `berth.toml` does not name is a 400 naming the step; a missing or wrong key
 and any browser `Origin` are refused, as on every other route.
 
+## Switch or stop an engine directly
+
+A request naming a model switches the card on its own. To switch without sending a prompt, or to give the card back,
+name the engine:
+
+```sh
+curl -s http://127.0.0.1:9799/v1/berth/switch -H "Authorization: Bearer $(berth key)" -d '{"engine":"strata"}'
+curl -s http://127.0.0.1:9799/v1/berth/stop   -H "Authorization: Bearer $(berth key)" -d '{"engine":"strata"}'
+```
+
+- **Switch** answers `202` once the start is under way, and starts the engine under a lease the same way a request
+  would: the holder drains at its boundary first. It takes any engine with a `start` command; another is a `404`.
+- **Stop** answers `202` with the leases berthd asked to give the card back, the same drain as `berth stop`. A
+  pinned holder (a game, a render, `berth hold`) is a `409`: Berth never stops it from the network. An engine that is
+  not running under a lease is a `409` too, and berthd not answering is a `503`.
+
+`GET /v1/berth/board` is the node in one read, for a board or a script: the card (who holds it, and whether it is
+free, held, draining, in a VM or failing its probe), then every engine in `berth.toml` with its state (up, offline,
+waiting, starting, failed), whether it can be switched to (`launch`) or stopped (`stoppable`), and its models with a
+`loaded` flag from the engine's own reader. `cards` is a list so a node with more cards needs no new shape.
+
 ## Open a stopped engine's web UI
 
 A bookmark to ComfyUI or Strata's chat page is a dead link while that engine is stopped. Give the engine a
@@ -270,7 +291,9 @@ Point the bookmark (or a home-page tile) at `http://127.0.0.1:9796/gui/comfyui` 
 - **After Launch:** the page says what the start waits for, in the broker's terms: "Waiting for strata release:
   finishing its current request", "Waiting for llama-swap (NInfer-27B) release: freeing its memory", then
   "loading comfyui". It opens the UI once ComfyUI answers. A failed start shows its reason code and a retry button.
-- `/gui/` lists every engine with a wake page.
+- `/gui/` lists every engine in `berth.toml` with its live state. Any engine with a `start` command gets a Launch
+  button there, with or without a `gui` URL, so a phone on the tailnet can switch the card to Strata or a
+  llama-server too. An engine with no web UI shows **Running** once it answers.
 
 <p align="center"><img src="https://raw.githubusercontent.com/T-Crypt/berth/main/assets/preview-wake.png" alt="The gateway's wake page for comfyui: comfyui is offline and the card is free, with a Launch comfyui button" width="560"></p>
 
@@ -279,7 +302,7 @@ slots are idle (`drain_post`), ComfyUI once its queue is empty (`drain_comfyui`)
 once its `/slots` show idle (`drain_slots`, below). A pinned holder (a game, a render, `berth hold`) is never stopped;
 the page says so and the start waits until it ends.
 
-The wake page needs no API key: it can only start an engine you gave both `start` and `gui`. It listens on
+The wake page needs no API key: it can only start an engine you gave a `start` command. It listens on
 loopback, accepts loopback Host names plus the gateway's `--allow-host` names (for `tailscale serve` in
 front), and takes a start only as a POST from its own page, so another site cannot make a visitor's
 browser drain the card.

@@ -12,11 +12,12 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-// GlobalMemoryStatusEx is not in golang.org/x/sys, so it is loaded by
-// name.
+// GlobalMemoryStatusEx and GetSystemTimes are not in golang.org/x/sys,
+// so they are loaded by name.
 var (
 	kernel32                 = windows.NewLazySystemDLL("kernel32.dll")
 	procGlobalMemoryStatusEx = kernel32.NewProc("GlobalMemoryStatusEx")
+	procGetSystemTimes       = kernel32.NewProc("GetSystemTimes")
 )
 
 // memoryStatusEx is MEMORYSTATUSEX (sysinfoapi.h), what
@@ -68,15 +69,34 @@ func MemPressure(root string) (float64, bool) {
 	return 0, false
 }
 
-// Read reports RAM and the page file from GlobalMemoryStatusEx and the
-// core count from the runtime. CPU and the load averages have no Windows
-// reading yet, so they stay 0; Cores is always the real one.
+// systemTimes is GetSystemTimes as cumulative idle and total time, in
+// 100 ns ticks. Kernel time already includes idle time, so the total is
+// kernel plus user.
+func systemTimes() (idle, tot uint64, ok bool) {
+	var i, k, u windows.Filetime
+	r, _, _ := procGetSystemTimes.Call(uintptr(unsafe.Pointer(&i)), uintptr(unsafe.Pointer(&k)), uintptr(unsafe.Pointer(&u)))
+	if r == 0 {
+		return 0, 0, false
+	}
+	ticks := func(f windows.Filetime) uint64 { return uint64(f.HighDateTime)<<32 | uint64(f.LowDateTime) }
+	return ticks(i), ticks(k) + ticks(u), true
+}
+
+// Read reports RAM and the page file from GlobalMemoryStatusEx, CPU from
+// GetSystemTimes over the interval since the last Read, and the core count
+// from the runtime. Windows has no load averages, so Load stays nil.
 func (r *Reader) Read() Stats {
 	m, ok := globalMemoryStatus()
 	if !ok {
 		return Stats{}
 	}
 	s := Stats{Supported: true, Cores: runtime.NumCPU()}
+	if idle, tot, ok := systemTimes(); ok {
+		r.mu.Lock()
+		s.CPU = cpuPct(r.idle, r.tot, idle, tot)
+		r.idle, r.tot = idle, tot
+		r.mu.Unlock()
+	}
 	s.RAMTotal = m.TotalPhys
 	if m.AvailPhys <= m.TotalPhys {
 		s.RAMUsed = m.TotalPhys - m.AvailPhys

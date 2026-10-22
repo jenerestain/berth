@@ -20,7 +20,7 @@ func TestRead(t *testing.T) {
 	w("loadavg", "1.50 0.75 0.25 2/300 99\n")
 	r := &Reader{ProcRoot: dir}
 	s := r.Read()
-	if !s.Supported || s.Cores != 2 || s.RAMUsed != 750*1024 || s.SwapUsed != 60*1024 || s.Load[0] != 1.5 || s.CPU != 0 {
+	if !s.Supported || s.Cores != 2 || s.RAMUsed != 750*1024 || s.SwapUsed != 60*1024 || s.Load == nil || s.Load[0] != 1.5 || s.CPU != 0 {
 		t.Fatalf("first read = %+v", s)
 	}
 	w("stat", "cpu  150 0 150 900 0 0 0 0 0 0\ncpu0 1\ncpu1 1\n") // +100 busy, +100 idle

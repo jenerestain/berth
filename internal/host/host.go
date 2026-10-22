@@ -10,14 +10,26 @@ package host
 import "sync"
 
 type Stats struct {
-	Supported bool       `json:"supported"`
-	CPU       float64    `json:"cpu_pct"` // all cores, since the previous Read
-	Cores     int        `json:"cores"`
-	RAMTotal  uint64     `json:"ram_total"`
-	RAMUsed   uint64     `json:"ram_used"` // total minus available
-	SwapTotal uint64     `json:"swap_total"`
-	SwapUsed  uint64     `json:"swap_used"`
-	Load      [3]float64 `json:"load"`
+	Supported bool    `json:"supported"`
+	CPU       float64 `json:"cpu_pct"` // all cores, since the previous Read
+	Cores     int     `json:"cores"`
+	RAMTotal  uint64  `json:"ram_total"`
+	RAMUsed   uint64  `json:"ram_used"` // total minus available
+	SwapTotal uint64  `json:"swap_total"`
+	SwapUsed  uint64  `json:"swap_used"`
+	// Load is the 1, 5 and 15 minute load averages; nil where the platform
+	// has none (Windows), so the JSON leaves it out instead of saying 0.
+	Load *[3]float64 `json:"load,omitempty"`
+}
+
+// cpuPct is the share of time not idle between two readings of cumulative
+// counters. The first reading, or counters that did not move forward,
+// give 0: there is no interval to measure.
+func cpuPct(prevIdle, prevTot, idle, tot uint64) float64 {
+	if prevTot == 0 || tot <= prevTot || idle < prevIdle {
+		return 0
+	}
+	return 100 * (1 - float64(idle-prevIdle)/float64(tot-prevTot))
 }
 
 // Reader keeps the previous CPU counters so each Read returns usage over

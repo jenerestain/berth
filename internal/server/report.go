@@ -38,13 +38,20 @@ func (r Reporter) send(event string, p gpu.Proc) {
 	if r.Notify && event == "squatter.appeared" {
 		if bin, err := exec.LookPath("notify-send"); err == nil {
 			body := fmt.Sprintf("%s (pid %d) holds %d MiB of VRAM without a lease", p.Name, p.PID, p.Used/gpu.MiB)
+			if p.GTT > 0 {
+				body += fmt.Sprintf(" and %d MiB of shared GTT", p.GTT/gpu.MiB)
+			}
 			_ = exec.Command(bin, "-a", "berth", "-u", "normal", "GPU squatter", body).Run()
 		}
 	}
 	host, _ := os.Hostname()
-	payload, _ := json.Marshal(map[string]any{
+	data := map[string]any{
 		"event": event, "pid": p.PID, "name": p.Name, "mib": p.Used / gpu.MiB, "host": host,
-	})
+	}
+	if p.GTT > 0 {
+		data["gtt_mib"] = p.GTT / gpu.MiB
+	}
+	payload, _ := json.Marshal(data)
 	r.postWebhook(payload)
 }
 

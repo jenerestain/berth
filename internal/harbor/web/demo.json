@@ -196,6 +196,7 @@
    },
    "decode_tps": 125.4,
    "prefill_tps": 3410.6,
+   "metrics_reported": true,
    "state": "up",
    "at": "2026-10-09T22:53:58.104512-06:00",
    "age_seconds": 3.2,

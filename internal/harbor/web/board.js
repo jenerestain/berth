@@ -202,7 +202,9 @@ export class Board {
       }
       const l = entry.lease;
       const st = entry.isWaiting ? "waiting" : l.state;
-      const word = statusText(st);
+      // a VFIO hold (group "vfio") is a VM session holding the card, not an
+      // engine's berth: the status word says so
+      const word = !entry.isWaiting && l.group === "vfio" && st === "active" ? "IN VM" : statusText(st);
       if (!isNew && this.prevState.get(entry.key) !== word) flash(row, "row-changed");
       this.prevState.set(entry.key, word);
       const tone = { active: "cyan", draining: "amber", stuck: "magenta", waiting: "amber", parking: "amber", parked: "green" }[st] || "dim";
@@ -219,12 +221,12 @@ export class Board {
       updateCell(c.hold, fit(hold, WIDTH.hold), "");
       // status cell: flip tiles, then the WARM and CONTESTED flags
       syncSi(c.status, st);
-      updateCell(c.status, fit(statusText(st), WIDTH.status), tone);
+      updateCell(c.status, fit(word, WIDTH.status), tone);
       syncWarm(row, entry);
       syncQueued(row, entry);
       syncContest(c.status, l.contested);
       updateCell(c.time, fit(ageText(l.age_seconds), WIDTH.time), "");
-      row.setAttribute("aria-label", "open ticket " + l.id + ", " + l.engine + ", " + statusText(st).toLowerCase());
+      row.setAttribute("aria-label", "open ticket " + l.id + ", " + l.engine + ", " + word.toLowerCase());
       const title = rowTitle(entry);
       if (title) row.title = title;
       else row.removeAttribute("title");
@@ -311,6 +313,7 @@ function syncQueued(row, entry) {
 function rowTitle(entry) {
   const l = entry.lease;
   const bits = [];
+  if (l.group === "vfio") bits.push("this hold pins the card for a virtual machine session");
   if (l.contested > 0) bits.push("granted while holders without a lease kept " + fmtBytes(l.contested) + " on this card");
   if (!entry.isWaiting && l.state === "parked") {
     const ram = entry.fp > 0 ? "about " + gib(entry.fp) : "an unknown amount";

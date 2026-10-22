@@ -161,21 +161,24 @@ export class EngineView {
       c.models.textContent = "";
       if (Array.isArray(eng.models) && eng.models.length > 0) {
         for (const m of eng.models) {
-          const vram = m.reported_vram ? " " + fmtGiB(m.reported_vram) + "G" : "";
+          const vram = " " + na(m.reported_vram, (v) => fmtGiB(v) + "G");
           c.models.append(el("div", "engine-model", el("span", null, m.name || "?"), el("span", "ms", (m.state || "") + vram)));
         }
       } else {
         c.models.append(el("div", "engine-models-note", "no models reported"));
       }
-      c.decode.num.textContent = (eng.decode_tps || 0).toFixed(1);
-      c.prefill.num.textContent = (eng.prefill_tps || 0).toFixed(1);
+      // metrics_reported separates a measured idle from an engine that never
+      // answered its counters endpoint; unreported figures read n/a, not 0.0
+      c.decode.num.textContent = na(eng.metrics_reported ? eng.decode_tps : null, (v) => v.toFixed(1));
+      c.prefill.num.textContent = na(eng.metrics_reported ? eng.prefill_tps : null, (v) => v.toFixed(1));
       c.decode.spark.set(c.hist.decode);
       c.prefill.spark.set(c.hist.prefill);
       const m = eng.metrics || {};
+      const tok = (v) => na(eng.metrics_reported ? v : null, fmtNum);
       c.totals.textContent = "";
       c.totals.append(
-        el("span", null, "in " + fmtNum(m.prompt_tokens) + " tok"),
-        el("span", null, "out " + fmtNum(m.output_tokens) + " tok"),
+        el("span", null, "in " + tok(m.prompt_tokens) + " tok"),
+        el("span", null, "out " + tok(m.output_tokens) + " tok"),
         el("span", null, "queue " + (Math.round(m.processing || 0) + "+" + Math.round(m.waiting || 0)))
       );
       c.extra.textContent = "";

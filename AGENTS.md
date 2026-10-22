@@ -4,7 +4,9 @@ Berth is the VRAM leasing service for every GPU you run. One Go daemon per machi
 hands a single card to many inference engines in turn: engines lease the card,
 the holder is drained, Berth waits until the driver reports the memory free, then
 admits the next engine. Processes holding VRAM without a lease are stowaways,
-reported, never touched. Linux + NVIDIA. Alpha.
+reported, never touched. Linux + NVIDIA; Linux AMD discrete RDNA3/RDNA4 and Phoenix
+APU (780M) support is experimental. APU leases are exclusive, with separate reserved
+UMA VRAM/GTT accounting and host-RAM admission checks; APU parking is not supported. Alpha.
 
 ## Commands
 
@@ -43,8 +45,10 @@ local proof command green before opening a PR; CI must end green at merge.
   port discovery by response fingerprint, and the 24 h request log.
 - `internal/export` — the store's rows as CSV or JSON for the `berth export` command.
 - `internal/fsx` — the one atomic file write (fsync the file and its directory).
-- `internal/gpu` — nvidia-smi polling (memory, compute apps) and each card's real
-  limits; on Windows, per-process VRAM from the PDH counter Task Manager reads.
+- `internal/gpu` — the shared Probe contract, NVIDIA nvidia-smi polling, and Linux
+  AMD sysfs/DRM observations (discrete RDNA3/RDNA4 and Phoenix APUs); on Windows, NVIDIA per-process
+  VRAM from the PDH counter Task Manager reads. Guarded AMD reads require fresh
+  driver evidence for admission and release. See contrib/amd/README.md for validation.
 - `internal/harbor` — the `berth harbor` web UI server and its collectors; UI assets
   live in `internal/harbor/web/`.
 - `internal/history` — the node's last hour of samples in memory at 5 s resolution.

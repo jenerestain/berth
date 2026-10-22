@@ -378,6 +378,47 @@ func TestGUIPlaneLaunchFlow(t *testing.T) {
 	}
 }
 
+// An engine with a start command and no web UI (Strata, a llama-server)
+// launches from the plane like one with a UI: the board is the phone's way to
+// switch the card. Its wake page does not exist, since there is no UI to send
+// the browser to.
+func TestGUIPlaneLaunchAPIOnly(t *testing.T) {
+	sock, b := daemon(t)
+	addr := freeAddr(t)
+	t.Setenv("BERTH_GW_ENGINE", addr+",strata-model,300ms")
+	g := &Gateway{Socket: sock, Ready: 10 * time.Second, Key: testKey, Log: slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Engines: []config.Engine{
+			{Name: "strata", Type: "llamacpp", URL: "http://" + addr, Start: []string{os.Args[0]}, Serves: []string{"strata-model"}},
+		}}
+	srv := httptest.NewServer(g.GUIHandler())
+	defer srv.Close()
+
+	resp := guiReq(t, "POST", srv.URL+"/gui/strata/wake", map[string]string{"Sec-Fetch-Site": "same-origin"})
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusAccepted {
+		t.Fatalf("wake = %d", resp.StatusCode)
+	}
+	deadline := time.Now().Add(8 * time.Second)
+	for {
+		r := planeRow(guiPlaneRows(t, srv.URL), "strata")
+		if r.State == "up" {
+			break
+		}
+		if r.State == "failed" || time.Now().After(deadline) {
+			t.Fatalf("row never came up: %+v", r)
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if st := b.Status(); len(st.Leases) != 1 || st.Leases[0].Engine != "strata" {
+		t.Fatalf("leases = %+v", st.Leases)
+	}
+	resp = guiReq(t, "GET", srv.URL+"/gui/strata", nil)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("wake page for an engine with no UI = %d, want 404", resp.StatusCode)
+	}
+}
+
 // A rebinding name cannot read the plane's state.
 func TestGUIPlaneGuard(t *testing.T) {
 	sock, b := daemon(t)

@@ -14,9 +14,11 @@ turn, or a sized share with `--needs-mib`; it doesn't make a model fit that does
 added `contrib/chaos`, the swap bench and the [tested hardware](benchmarks.md#tested-hardware) table so you can
 check it on yours.
 
-**AMD? Windows?** AMD on Linux and a full Windows node are planned for v0.4. Windows with NVIDIA
-works today as experimental, and `contrib/windows/check.ps1` checks it on your machine; see the
-[support matrix](https://github.com/T-Crypt/berth#support-matrix).
+**AMD? Windows?** Linux AMD RDNA3/RDNA4 discrete and Phoenix/780M APU support is experimental.
+APU leases are exclusive, track UMA VRAM/GTT separately, and require host-RAM headroom;
+APU parking and other APU generations are not supported yet.
+Windows with NVIDIA is experimental too, and `contrib/windows/check.ps1` checks it on your
+machine; see the [support matrix](https://github.com/T-Crypt/berth#support-matrix).
 
 **Can Berth handle ComfyUI on the host and vLLM in Docker?** Yes. Start each one under its own
 lease: `berth run --as comfyui -- python ...` for ComfyUI, and

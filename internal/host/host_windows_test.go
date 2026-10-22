@@ -5,7 +5,10 @@
 
 package host
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 // A real Windows machine must read its own memory: the totals are the
 // installed RAM, the available figure sits inside it, and the page file
@@ -33,5 +36,15 @@ func TestStatsWindows(t *testing.T) {
 	}
 	if s.Cores <= 0 {
 		t.Fatalf("Cores = %d, want the real count", s.Cores)
+	}
+	if s.Load != nil {
+		t.Fatalf("Load = %v, want nil: Windows has no load averages", *s.Load)
+	}
+	r := &Reader{}
+	r.Read()
+	for end := time.Now().Add(200 * time.Millisecond); time.Now().Before(end); {
+	}
+	if s = r.Read(); s.CPU <= 0 || s.CPU > 100 {
+		t.Fatalf("CPU = %v after a busy interval, want a reading in (0, 100]", s.CPU)
 	}
 }

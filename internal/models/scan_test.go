@@ -195,6 +195,58 @@ func TestScanHFCache(t *testing.T) {
 	}
 }
 
+// A models--* directory with no snapshots is the husk of an abandoned
+// download, not one repo of an HF cache. It must not hide the plain models
+// around it, and a real cache with a husk beside it is still a cache.
+func TestScanHFHusk(t *testing.T) {
+	cases := []struct {
+		name  string
+		setup func(root string)
+		want  string // "name/source" for every model, in scan order
+	}{
+		{
+			name: "husk beside a plain store",
+			setup: func(root string) {
+				sampleFile(t, filepath.Join(root, "plain.gguf"), "Plain Model")
+				if err := os.Mkdir(filepath.Join(root, "models--x--y"), 0o755); err != nil {
+					t.Fatal(err)
+				}
+			},
+			want: "plain/dir",
+		},
+		{
+			name: "a real cache is an HF cache",
+			setup: func(root string) {
+				sampleFile(t, filepath.Join(root, "models--org--repo", "snapshots", "model.gguf"), "Whatever The Blob Says")
+			},
+			want: "org/repo/hf-cache",
+		},
+		{
+			name: "husk beside a real cache",
+			setup: func(root string) {
+				sampleFile(t, filepath.Join(root, "models--org--repo", "snapshots", "model.gguf"), "Whatever The Blob Says")
+				if err := os.Mkdir(filepath.Join(root, "models--x--y"), 0o755); err != nil {
+					t.Fatal(err)
+				}
+			},
+			want: "org/repo/hf-cache",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			tc.setup(root)
+			var parts []string
+			for _, m := range Scan([]string{root}) {
+				parts = append(parts, m.Name+"/"+m.Source)
+			}
+			if got := strings.Join(parts, ", "); got != tc.want {
+				t.Errorf("scan = %s, want %s", got, tc.want)
+			}
+		})
+	}
+}
+
 // testManifest is the Ollama tag file: a layer list, of which one layer is the weights.
 type testManifest struct {
 	MediaType string        `json:"mediaType"`

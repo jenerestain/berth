@@ -58,7 +58,9 @@ models:
 
 llama-swap stops a model with SIGTERM; `berth run` forwards it to the engine's process group.
 While Berth waits for the card, llama-swap's `healthCheckTimeout` keeps the request open.
-Reading: `type = "llama-swap"` follows every running model's upstream metrics.
+Reading: `type = "llama-swap"` follows every running model's upstream metrics, which exist only
+when the model's `cmd` starts `llama-server` with `--metrics`; without it the engine stays up and
+the harbor shows n/a for decode, prefill and token totals.
 
 ## llama.cpp (`llama-server`), NInfer, KoboldCpp
 

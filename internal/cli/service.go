@@ -7,7 +7,10 @@ import (
 	"context"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
+
+	"github.com/T-Crypt/berth/internal/gpu"
 )
 
 // Unit is one berth service: what it runs and where it sits in the
@@ -52,6 +55,15 @@ func serviceUnits(exe string, gateway, harbor bool) []Unit {
 // allUnits is the list uninstall and status report on: every service the
 // install could have written.
 func allUnits() []Unit { return serviceUnits("", true, true) }
+
+func serviceUnitsForGPU(exe string, gateway, harbor bool, backend string, index int) []Unit {
+	units := serviceUnits(exe, gateway, harbor)
+	units[0].Exec[3] = strconv.Itoa(index)
+	if backend != "" && backend != "auto" {
+		units[0].Exec = append(units[0].Exec, "--gpu-backend", backend)
+	}
+	return units
+}
 
 // serviceUnit is one unit's outcome in the install, uninstall and status
 // documents. Content is the file the install writes, set on install rows so
@@ -152,17 +164,22 @@ func runServiceInstall(c *Context) int {
 	gateway := fs.Bool("gateway", false, "also install the gateway")
 	harbor := fs.Bool("harbor", false, "also install the harbor")
 	dryRun := fs.Bool("dry-run", false, "print what would be written and run, change nothing")
+	backend := fs.String("gpu-backend", "auto", "daemon GPU probe: auto, nvidia or amd")
+	index := fs.Int("gpu", 0, "daemon GPU index (AMD: DRM cardN number)")
 	if code, done := c.Parse(fs); done {
 		return code
 	}
 	if code, done := c.noArgs(); done {
 		return code
 	}
+	if err := gpu.ValidateSelection(*backend, *index); err != nil {
+		return c.fail(Failf("%v", err))
+	}
 	exe, err := os.Executable()
 	if err != nil {
 		return c.fail(Systemf("find the berth binary: %v", err))
 	}
-	doc, e := serviceInstall(context.Background(), liveServiceOps(), serviceUnits(exe, *gateway, *harbor), *dryRun)
+	doc, e := serviceInstall(context.Background(), liveServiceOps(), serviceUnitsForGPU(exe, *gateway, *harbor, *backend, *index), *dryRun)
 	return c.Write(serviceView{verb: "install", doc: *doc}, e)
 }
 

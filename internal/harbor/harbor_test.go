@@ -187,6 +187,54 @@ func TestListenMode(t *testing.T) {
 	}
 }
 
+// TestStatusPassthroughReachesThePage: a node that reports the governed card
+// in a VM passes the passthrough object and the card's figures through
+// /v1/status unshaped, so the page's panels have the state and the last
+// reading's age to show.
+func TestStatusPassthroughReachesThePage(t *testing.T) {
+	n := newFakeNode(t, 0, nil)
+	n.st = &proto.Status{
+		API: proto.APIVersion,
+		GPUs: []proto.GPU{{
+			Index: 0, Name: "NVIDIA GeForce RTX 4090", Scheduled: true,
+			Total: 24 << 30, Used: 20 << 30, Free: 4 << 30, Baseline: 2 << 30, Age: 300,
+		}},
+		Passthrough: &proto.Passthrough{State: proto.CardPassthrough, Driver: "vfio-pci"},
+	}
+	srv := newEventsHarbor(t, n)
+	resp, err := http.Get(srv.URL + "/v1/status")
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("/v1/status: %s %s", resp.Status, b)
+	}
+	body := string(b)
+	for _, want := range []string{
+		`"passthrough":{"state":"passthrough","driver":"vfio-pci"}`,
+		`"scheduled":true`,
+		`"age_seconds":300`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("/v1/status does not carry %s:\n%s", want, body)
+		}
+	}
+
+	// detaching reads as its own state, a switch under way, not passthrough
+	n.st.Passthrough = &proto.Passthrough{State: proto.CardDetaching, Driver: "nvidia"}
+	resp, err = http.Get(srv.URL + "/v1/status")
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, _ = io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if !strings.Contains(string(b), `"passthrough":{"state":"detaching","driver":"nvidia"}`) {
+		t.Fatalf("detaching: %s", b)
+	}
+}
+
 // logBuf is a bytes.Buffer safe to poll from the test while Serve logs to it.
 type logBuf struct {
 	mu sync.Mutex

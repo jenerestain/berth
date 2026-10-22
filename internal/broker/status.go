@@ -57,14 +57,18 @@ func (b *Broker) Status() proto.Status {
 	devs := b.snap.Devices
 	if len(devs) == 0 && b.snap.Total > 0 {
 		devs = []gpu.Device{{Index: b.snap.Index, Name: b.snap.Name, Total: b.snap.Total, Used: b.snap.Used, Free: b.snap.Free,
+			APU: b.snap.APU, GTTTotal: b.snap.GTTTotal, GTTUsed: b.snap.GTTUsed,
 			Util: -1, Temp: -1, Power: -1, PowerLimit: -1, Fan: -1, ClockSM: -1, ClockMem: -1, PCIeGen: -1, PCIeWidth: -1}}
 	}
 	for _, d := range devs {
 		g := proto.GPU{Index: d.Index, Name: d.Name, Total: d.Total, Used: d.Used, Free: d.Free, Age: now.Sub(b.snap.At).Seconds(),
+			APU: d.APU, GTTTotal: d.GTTTotal, GTTUsed: d.GTTUsed,
 			Util: d.Util, Temp: d.Temp, Power: d.Power, PowerLimit: d.PowerLimit, Fan: d.Fan,
 			ClockSM: d.ClockSM, ClockMem: d.ClockMem, PCIeGen: d.PCIeGen, PCIeWidth: d.PCIeWidth}
 		if d.Index == b.snap.Index {
 			g.Scheduled, g.Baseline = true, b.snap.Baseline()
+			g.UnobservedPIDs = append([]int(nil), b.snap.Unobserved...)
+			g.GTTBaseline = b.snap.GTTBaseline()
 		}
 		st.GPUs = append(st.GPUs, g)
 	}
@@ -79,6 +83,7 @@ func (b *Broker) Status() proto.Status {
 			Needs: l.needs, PID: l.pid, PIDStart: l.pidStart,
 			Container: l.container, ContainerName: l.containerName,
 			GPUPIDs: pids, Used: l.used(),
+			GTTUsed: l.gttUsed(), GTTContested: l.contestedGTT,
 			Contested: l.contested, Age: now.Sub(since).Seconds(), Pinned: l.pinned,
 		}
 		if l.state == parked {
@@ -103,7 +108,8 @@ func (b *Broker) Status() proto.Status {
 	for _, s := range b.squatters {
 		st.Squatters = append(st.Squatters, proto.Squatter{
 			PID: s.proc.PID, PIDStart: s.id.start, Name: s.proc.Name, Used: s.proc.Used,
-			Run: s.run, Container: short(s.container), ContainerName: s.containerName,
+			GTTUsed: s.proc.GTT,
+			Run:     s.run, Container: short(s.container), ContainerName: s.containerName,
 			Age: now.Sub(s.seen).Seconds(),
 		})
 	}
@@ -113,6 +119,7 @@ func (b *Broker) Status() proto.Status {
 		for _, cp := range b.claimed {
 			if cp.claim == c.Name {
 				c.Used += cp.proc.Used
+				c.GTTUsed += cp.proc.GTT
 			}
 		}
 		st.Claims = append(st.Claims, c)

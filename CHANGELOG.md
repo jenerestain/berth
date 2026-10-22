@@ -8,10 +8,25 @@ has a matching GitHub release whose body comes from its section below.
 
 ### Added
 
+- Gateway: `POST /v1/berth/switch` and `POST /v1/berth/stop` switch the card to an engine or give it back without
+  sending a prompt. Stop never touches a pinned holder. The `/gui/` board's Launch now uses the same switch.
+- `berth pair` pairs a phone or browser with the harbor: a one-time link and its QR code, a
+  **Pair this device** page, and a device cookie for a year. `--list`, `--revoke ID` and `--revoke-all`
+  manage devices. berthd keeps only hashes. Pairing is the groundwork for switching engines from the harbor.
+- Gateway: `GET /v1/berth/board` reads the node in one call: the card and who holds it, every engine's state and
+  actions, and each engine's models with which are loaded.
+- Linux AMD support (experimental), contributed by @jenerestain. `berth daemon --gpu-backend amd`
+  governs a discrete RDNA3 or RDNA4 card, or a Phoenix APU (Radeon 780M), read from sysfs and DRM
+  `fdinfo` with no ROCm. `--gpu N` names DRM cardN. On an APU, reserved VRAM and GTT (shared host
+  RAM) are tracked apart, only whole-card leases are granted, and parking is refused. `auto` keeps
+  NVIDIA whenever `nvidia-smi` is installed, so existing NVIDIA setups are unchanged.
 - Card passed through to a VM (experimental). While the governed card is bound to `vfio-pci`,
   `berth status` and its JSON show it as passed through to a VM, and waiters are told why nothing is
   granted. While a VFIO hold is granted, berthd does not open the card, so a driver switch can run.
   `card.passthrough` and `card.returned` events mark each change.
+- The harbor shows a card passed through to a VM (experimental): a GPU IN VM tag on every tab, the
+  card's panel and the departures board marked, the change named in the log, and the session left as a
+  gap in the tide.
 - `berth vfio status` and `berth vfio run` (experimental, Linux only) for passing the governed card to
   a VM. `status` shows IOMMU, the card's IOMMU group with each function's driver, and the processes
   holding the card. `run -- CMD` drains the card, stops berthd's own probe for the hold, refuses while
@@ -72,10 +87,25 @@ has a matching GitHub release whose body comes from its section below.
 
 ### Fixed
 
+- Windows: the host's CPU is read (GetSystemTimes), so the harbor's machine meter and `berth status` show real CPU
+  use instead of 0%. Windows has no load averages: the node now leaves them out of its JSON and the harbor and
+  `berth status` say n/a instead of three zeros. Reported by @azrael-229 (#139).
+- One empty `models--*` husk no longer makes a whole store read as an HF cache with no models,
+  reported by @azrael-229 (#138). A root is an HF cache only when a `models--*` directory holds
+  `snapshots`, so an abandoned download beside plain models keeps them listed.
+- The gateway's `/gui/` board launches an engine that has a `start` command but no `gui` URL (Strata, a
+  llama-server). Its Launch button answered 404 and stayed on "Launching..."; it now starts the engine under a
+  lease and shows Running once it answers. A refused start shows its reason instead of hanging.
+- `berth vfio status ADDR` asks berthd for its view instead of calling it unreachable, and while the
+  card is in a VM it says so instead of printing the last memory reading as current.
 - The wake page and start errors show an engine's last log line without terminal color codes
   (`[32m[INFO][0m`), and a progress bar's line as its last redraw.
 - Windows: a process the GPU counters report but nvidia-smi does not list, such as dwm.exe
   holding the card's memory, now shows its name instead of a blank one.
+- The harbor engine cards and `berth status` draw an unreported rate as unknown, not zero. An
+  engine whose counters endpoint never answered (a llama-swap whose llama-server starts without
+  `--metrics`) shows n/a for decode, prefill and the token totals, and the ENGINE table prints a
+  dash. Reported by @azrael-229 ([#140](https://github.com/T-Crypt/berth/issues/140)).
 
 ## [v0.3.3] - 2026-10-21
 

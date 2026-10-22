@@ -340,7 +340,10 @@ func sourceOf(p string) string {
 	}
 	if ents, err := os.ReadDir(p); err == nil {
 		for _, e := range ents {
-			if e.IsDir() && strings.HasPrefix(e.Name(), "models--") {
+			// The HF scan reads snapshots/, so that is what makes a root an
+			// HF cache. A models--* husk with none, from an abandoned
+			// download, must not hide the plain models around it.
+			if e.IsDir() && strings.HasPrefix(e.Name(), "models--") && isDir(filepath.Join(p, e.Name(), "snapshots")) {
 				return SourceHFCache
 			}
 		}

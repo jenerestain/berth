@@ -28,19 +28,20 @@ type vfioCard struct {
 }
 
 // vfioCardAt resolves the governed card. With an explicit address (status
-// takes one as its argument) no daemon or nvidia-smi is asked at all, so the
-// state stays readable while the card is bound to vfio-pci and nvidia-smi
-// cannot see it. Otherwise the status berthd reports names the scheduled
+// takes one as its argument) nvidia-smi is not asked, so the state stays
+// readable while the card is bound to vfio-pci and nvidia-smi cannot see it;
+// berthd is asked either way. Otherwise the status berthd reports names the scheduled
 // index, and nvidia-smi names that card's bus id; when berthd is down or
 // has no reading yet, index 0.
 func vfioCardAt(sock, explicit, smiBin string) (vfioCard, *Error) {
-	if explicit != "" {
-		addr := vfio.SysAddr(explicit)
-		return vfioCard{Addr: addr, BusID: explicitNvidiaForm(addr)}, nil
-	}
 	var card vfioCard
 	st, err := vfioStatusOf(sock)
 	card.Daemon, card.DialErr = st, err
+	if explicit != "" {
+		card.Addr = vfio.SysAddr(explicit)
+		card.BusID = explicitNvidiaForm(card.Addr)
+		return card, nil
+	}
 	if err == nil {
 		card.Index = vfioIndex(st)
 	}
@@ -150,6 +151,10 @@ type vfioBerthdDoc struct {
 	ProbeErr  string      `json:"probe_error,omitempty"`
 	GPU       *vfioGPUDoc `json:"gpu,omitempty"`
 	Hold      string      `json:"hold,omitempty"` // the granted vfio hold, lease and engine
+	// Passthrough is berthd's card state while the card is in a VM or
+	// switching ("passthrough", "detaching"); its memory figures are then the
+	// last reading before the hold, not the card now.
+	Passthrough string `json:"passthrough,omitempty"`
 }
 
 type vfioGPUDoc struct {
@@ -240,8 +245,13 @@ func (v vfioStatusView) Human(c *Context, ok bool) error {
 		return nil
 	}
 	if g := d.Berthd.GPU; g != nil {
-		c.Printf("berthd  gpu%d %s: %s used of %s (read %.0f s ago)\n",
-			g.Index, g.Name, server.MiB(g.Used), server.MiB(g.Total), g.Age)
+		if d.Berthd.Passthrough != "" {
+			c.Printf("berthd  gpu%d %s: %s (last memory reading %.0f s ago)\n",
+				g.Index, g.Name, cardLine(&proto.Passthrough{State: d.Berthd.Passthrough, Driver: vfioDriverOf(d)}), g.Age)
+		} else {
+			c.Printf("berthd  gpu%d %s: %s used of %s (read %.0f s ago)\n",
+				g.Index, g.Name, server.MiB(g.Used), server.MiB(g.Total), g.Age)
+		}
 	}
 	if d.Berthd.ProbeErr != "" {
 		c.Printf("probe   %s\n", c.Style.Err(d.Berthd.ProbeErr))
@@ -339,6 +349,9 @@ func vfioBerthdView(card vfioCard) *vfioBerthdDoc {
 		return &vfioBerthdDoc{}
 	}
 	b := &vfioBerthdDoc{Reachable: true, ProbeErr: card.Daemon.ProbeErr}
+	if p := card.Daemon.Passthrough; p != nil {
+		b.Passthrough = p.State
+	}
 	for _, g := range card.Daemon.GPUs {
 		if g.Index == card.Index {
 			b.GPU = &vfioGPUDoc{Index: g.Index, Name: g.Name, Used: g.Used, Total: g.Total, Age: g.Age}
@@ -350,4 +363,14 @@ func vfioBerthdView(card vfioCard) *vfioBerthdDoc {
 		}
 	}
 	return b
+}
+
+// vfioDriverOf is the driver bound to the card's own function in the reading.
+func vfioDriverOf(d vfioStatusDoc) string {
+	for _, f := range d.Group {
+		if f.Addr == d.Addr {
+			return f.Driver
+		}
+	}
+	return ""
 }

@@ -107,6 +107,8 @@ export function kindWord(kind) {
     case "probe.recovered": return "PROBE UP";
     case "alert.raised": return "ALERT";
     case "alert.cleared": return "ALERT CLEAR";
+    case "card.passthrough": return "GPU TO VM";
+    case "card.returned": return "GPU BACK";
     default: return String(kind || "EVENT").toUpperCase();
   }
 }
@@ -174,6 +176,10 @@ const KIND_SI = {
   "squatter.gone": "adrift",
   "probe.failed": "crit",
   "probe.recovered": "up",
+  // the card going to and coming back from a VM reads like the lease states:
+  // away = aground (attention, the card does not answer), back = up
+  "card.passthrough": "aground",
+  "card.returned": "up",
   "alert.raised": "warn",
   "alert.cleared": "adrift",
 };

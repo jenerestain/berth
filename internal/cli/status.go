@@ -23,6 +23,13 @@ type statusView struct {
 
 func (v statusView) Data() any { return v.st }
 
+func memoryHeld(vram, gtt uint64) string {
+	if gtt > 0 {
+		return server.MiB(vram) + " VRAM + " + server.MiB(gtt) + " GTT"
+	}
+	return server.MiB(vram)
+}
+
 func (v statusView) Human(c *Context, ok bool) error {
 	st := v.st
 	c.Printf("%s\n", c.Style.Dim(fmt.Sprintf("berthd %s on %s (api %d)", st.Version, v.sock, st.API)))
@@ -45,6 +52,12 @@ func (v statusView) Human(c *Context, ok bool) error {
 		}
 		c.Printf("gpu%d    %s: %s used of %s, %s free (%s, read %s ago)\n", g.Index, g.Name,
 			server.MiB(g.Used), server.MiB(g.Total), server.MiB(g.Free), role, age(g.Age))
+		if g.APU {
+			c.Printf("        reserved UMA VRAM above; GTT %s used of %s driver capacity (shared host RAM, not extra VRAM); exclusive leases only\n", server.MiB(g.GTTUsed), server.MiB(g.GTTTotal))
+		}
+		if len(g.UnobservedPIDs) > 0 {
+			c.Printf("        process visibility limited for PIDs %v; unknown memory remains in baseline\n", g.UnobservedPIDs)
+		}
 	}
 	if st.ProbeErr != "" {
 		c.Printf("probe   %s\n", c.Style.Err("FAILING: "+st.ProbeErr))
@@ -82,7 +95,7 @@ func (v statusView) Human(c *Context, ok bool) error {
 			if l.Pinned {
 				prio += ",pinned"
 			}
-			row := fmt.Sprintf("%s\t%s\t%s\t%s\t%s\t%s\t%v", l.ID, l.Engine, prio, state, needs, server.MiB(l.Used), l.GPUPIDs)
+			row := fmt.Sprintf("%s\t%s\t%s\t%s\t%s\t%s\t%v", l.ID, l.Engine, prio, state, needs, memoryHeld(l.Used, l.GTTUsed), l.GPUPIDs)
 			if c.Verbose {
 				row += fmt.Sprintf("\t%d", l.PID)
 			}
@@ -108,7 +121,7 @@ func (v statusView) Human(c *Context, ok bool) error {
 	if len(st.Squatters) > 0 {
 		fmt.Fprint(tw, "\nSQUATTER\tPID\tHOLDS\tSEEN\tUNPROTECTED RUN\n")
 		for _, s := range st.Squatters {
-			fmt.Fprintf(tw, "%s\t%d\t%s\t%s\t%s\n", s.Name, s.PID, server.MiB(s.Used), age(s.Age), s.Run)
+			fmt.Fprintf(tw, "%s\t%d\t%s\t%s\t%s\n", s.Name, s.PID, memoryHeld(s.Used, s.GTTUsed), age(s.Age), s.Run)
 		}
 	}
 	var active []proto.Claim
@@ -124,8 +137,8 @@ func (v statusView) Human(c *Context, ok bool) error {
 			if lease == "" {
 				lease = "-"
 			}
-			if cl.Used > 0 {
-				used = server.MiB(cl.Used)
+			if cl.Used > 0 || cl.GTTUsed > 0 {
+				used = memoryHeld(cl.Used, cl.GTTUsed)
 			}
 			fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", cl.Name, cl.Action, lease, used, cl.Procs)
 		}
@@ -162,8 +175,13 @@ func (v statusView) Human(c *Context, ok bool) error {
 			if b, ok := est[e.Name]; ok {
 				estimate = server.MiB(b)
 			}
-			fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%.0f t/s\t%.0f t/s\t%.0f\t%.0f\t%s\n", e.Name, e.Type, esc(up), strings.Join(names, ","),
-				e.DecodeTPS, e.PrefillTPS, e.Metrics.OutputTokens, e.Metrics.Processing+e.Metrics.Waiting, estimate)
+			// a rate with no metrics behind it is unknown, not a measured idle
+			decode, prefill := "-", "-"
+			if e.MetricsReported {
+				decode, prefill = fmt.Sprintf("%.0f t/s", e.DecodeTPS), fmt.Sprintf("%.0f t/s", e.PrefillTPS)
+			}
+			fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%.0f\t%.0f\t%s\n", e.Name, e.Type, esc(up), strings.Join(names, ","),
+				decode, prefill, e.Metrics.OutputTokens, e.Metrics.Processing+e.Metrics.Waiting, estimate)
 		}
 	}
 	tw.Flush()
@@ -274,10 +292,14 @@ func hostLine(c *Context, h *proto.Host) {
 		c.Printf("%s  no host telemetry on this platform\n", c.Style.Dim("host"))
 		return
 	}
+	load := "load n/a"
+	if h.Load != nil {
+		load = fmt.Sprintf("load %.2f %.2f %.2f", h.Load[0], h.Load[1], h.Load[2])
+	}
 	c.Printf("%s %s\n", c.Style.Dim("host"),
-		fmt.Sprintf("CPU %.0f%% of %d cores, RAM %s of %s, swap %s of %s, load %.2f %.2f %.2f",
+		fmt.Sprintf("CPU %.0f%% of %d cores, RAM %s of %s, swap %s of %s, %s",
 			h.CPU, h.Cores, server.MiB(h.RAMUsed), server.MiB(h.RAMTotal),
-			server.MiB(h.SwapUsed), server.MiB(h.SwapTotal), h.Load[0], h.Load[1], h.Load[2]))
+			server.MiB(h.SwapUsed), server.MiB(h.SwapTotal), load))
 }
 
 // alertsLine is the alert state the node holds: the node is the source of

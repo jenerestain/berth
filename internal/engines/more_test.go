@@ -49,12 +49,13 @@ var engineCases = []struct {
 	processing float64
 	waiting    float64
 	output     float64
+	reported   bool
 }{
 	{typ: "vllm", routes: map[string]string{
 		"/v1/models": `{"data":[{"id":"Qwen/Qwen3-8B","max_model_len":32768}]}`,
 		"/metrics":   "vllm:prompt_tokens_total 400\nvllm:generation_tokens_total 900\nvllm:num_requests_running 2\nvllm:num_requests_waiting 3\n",
 		"/version":   `{"version":"0.11.0"}`,
-	}, models: []string{"Qwen/Qwen3-8B"}, window: 32768, processing: 2, waiting: 3, output: 900},
+	}, models: []string{"Qwen/Qwen3-8B"}, window: 32768, processing: 2, waiting: 3, output: 900, reported: true},
 	// vLLM with metrics disabled is still up.
 	{typ: "vllm", routes: map[string]string{
 		"/v1/models": `{"data":[{"id":"m","max_model_len":8192}]}`,
@@ -63,12 +64,12 @@ var engineCases = []struct {
 		"/v1/models":      `{"data":[{"id":"glm","context_length":65536}]}`,
 		"/metrics":        "sglang:generation_tokens_total 77\nsglang:num_requests_waiting 1\n",
 		"/get_model_info": `{"model_path":"glm"}`,
-	}, models: []string{"glm"}, window: 65536, waiting: 1, output: 77},
+	}, models: []string{"glm"}, window: 65536, waiting: 1, output: 77, reported: true},
 	{typ: "localai", routes: map[string]string{
 		"/v1/models": `{"data":[{"id":"phi"}]}`,
 		"/metrics":   "localai_completion_tokens_total 12\n",
 		"/healthz":   "204",
-	}, models: []string{"phi"}, output: 12},
+	}, models: []string{"phi"}, output: 12, reported: true},
 	{typ: "openai", routes: map[string]string{
 		"/v1/models": `{"data":[{"id":"a"},{"id":"b","context_length":4096}]}`,
 	}, models: []string{"a", "b"}, window: 4096},
@@ -90,7 +91,7 @@ var engineCases = []struct {
 	{typ: "freetoken", routes: map[string]string{
 		"/v1/stats": `{"stats":{"tokens_generated":500,"prompt_tokens":40,"queue":2,"generating":true}}`,
 		"/health":   `{"ok":true}`,
-	}, processing: 1, waiting: 2, output: 500},
+	}, processing: 1, waiting: 2, output: 500, reported: true},
 	{typ: "comfyui", routes: map[string]string{
 		"/queue":        `{"queue_running":[[1,"a"]],"queue_pending":[[2,"b"],[3,"c"]]}`,
 		"/system_stats": `{"system":{"comfyui_version":"0.3.60"},"devices":[]}`,
@@ -118,6 +119,9 @@ func TestEveryEngineReader(t *testing.T) {
 			if e.Window != c.window || e.Metrics.Processing != c.processing || e.Metrics.Waiting != c.waiting || e.Metrics.OutputTokens != c.output {
 				t.Fatalf("window %d processing %g waiting %g output %g; want %d %g %g %g",
 					e.Window, e.Metrics.Processing, e.Metrics.Waiting, e.Metrics.OutputTokens, c.window, c.processing, c.waiting, c.output)
+			}
+			if e.MetricsReported != c.reported {
+				t.Fatalf("metrics_reported = %v, want %v", e.MetricsReported, c.reported)
 			}
 		})
 	}

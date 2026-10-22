@@ -27,10 +27,12 @@ import (
 // it answers. A bookmark or a home-page tile can point there instead of at an
 // engine that may be stopped.
 //
-// It holds no key: it can only start an engine that has a start command and
-// a gui URL in berth.toml, which is what the operator asked for by writing
-// both. A start is a POST that must come from the page itself (same origin),
-// so another site cannot make a visitor's browser drain the card.
+// It holds no key: it can only start an engine that has a start command in
+// berth.toml, which is what the operator asked for by writing one. The index
+// launches any such engine, with a web UI or without one (Strata, a
+// llama-server), so a phone can switch the card. A start is a POST that must
+// come from the page itself (same origin), so another site cannot make a
+// visitor's browser drain the card.
 
 //go:embed gui
 var guiFS embed.FS
@@ -53,7 +55,7 @@ func (g *Gateway) GUIHandler() http.Handler {
 	// The static route beats GET /gui/{name} in Go's ServeMux, so an engine
 	// named "state" loses that one URL to the plane's state endpoint.
 	mux.HandleFunc("GET /gui/state", func(w http.ResponseWriter, r *http.Request) {
-		rows := g.guiStateAll(r.Context())
+		rows := g.guiRows(r.Context(), g.nodeStatus())
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Cache-Control", "no-store")
 		_ = json.NewEncoder(w).Encode(rows)
@@ -113,6 +115,17 @@ func (g *Gateway) guiEngine(name string) (*config.Engine, bool) {
 	return nil, false
 }
 
+// launchable is the configured engine name, if Berth can start it.
+func (g *Gateway) launchable(name string) (*config.Engine, bool) {
+	for i := range g.Engines {
+		e := &g.Engines[i]
+		if e.Name == name && len(e.Start) > 0 {
+			return e, true
+		}
+	}
+	return nil, false
+}
+
 func (g *Gateway) probe(ctx context.Context, e *config.Engine) bool {
 	if e.Type == "comfyui" {
 		return g.comfyAnswers(ctx, e.URL)
@@ -159,11 +172,10 @@ func (g *Gateway) guiIndex(w http.ResponseWriter, _ *http.Request) {
 	_ = guiPage.Execute(w, v)
 }
 
-// guiStateAll is the plane's state: one row per engine in config order.
+// guiRows is the plane's state: one row per engine in config order.
 // Up rows come from the probe; everything else reuses cardView, exactly like
 // the per-engine state handler.
-func (g *Gateway) guiStateAll(ctx context.Context) []guiRow {
-	node := g.nodeStatus()
+func (g *Gateway) guiRows(ctx context.Context, node *proto.Status) []guiRow {
 	rows := make([]guiRow, 0, len(g.Engines))
 	for i := range g.Engines {
 		e := &g.Engines[i]
@@ -337,40 +349,15 @@ func names(card []guiHold) string {
 	return strings.Join(out, " and ")
 }
 
-// guiWake starts the engine in the background and answers at once; the page
-// polls /state. A second ask while a start is under way joins it. Only the
-// Start button asks: opening the page never takes the card.
+// guiWake is the page's Launch: a switch to the engine. Only the button
+// asks; opening the page never takes the card.
 func (g *Gateway) guiWake(w http.ResponseWriter, r *http.Request) {
-	e, ok := g.guiEngine(r.PathValue("name"))
+	e, ok := g.launchable(r.PathValue("name"))
 	if !ok {
-		apiError(w, http.StatusNotFound, "no engine of that name has a gui and a start command in berth.toml")
+		apiError(w, http.StatusNotFound, "no engine of that name has a start command in berth.toml")
 		return
 	}
-	g.mu.Lock()
-	if g.wakes == nil {
-		g.wakes = map[string]*wake{}
-	}
-	already := g.wakes[e.Name] != nil && g.wakes[e.Name].starting
-	if !already {
-		g.wakes[e.Name] = &wake{starting: true}
-	}
-	g.mu.Unlock()
-	if !already {
-		g.log().Info("gui plane starting engine", "engine", e.Name)
-		go func() {
-			// The start outlives the page's request: a closed tab still
-			// leaves the engine coming up, bounded by the gateway's ready.
-			ctx, cancel := context.WithTimeout(context.Background(), g.ready())
-			defer cancel()
-			err := g.ensure(ctx, e)
-			if err != nil {
-				g.log().Warn("gui plane start failed", "engine", e.Name, "err", err)
-			}
-			g.mu.Lock()
-			g.wakes[e.Name] = &wake{err: err}
-			g.mu.Unlock()
-		}()
-	}
+	g.switchTo(e)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusAccepted)
 	_ = json.NewEncoder(w).Encode(guiStatus{State: "waiting", Message: "Asking berth for the card"})

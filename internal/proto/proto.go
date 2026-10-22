@@ -58,6 +58,18 @@ const (
 	OpParkFailed = "park_failed"
 	OpResume     = "resume"
 	OpAwake      = "awake"
+
+	// Device pairing for the harbor's actions; berthd owns the file. A
+	// client mints a code (OpPairCode, reply Code), the harbor trades one
+	// for a device token (OpPairRedeem: Code and DeviceName in, Token out)
+	// and checks a token on every write (OpPairCheck: Token in, Paired out).
+	// OpPairList answers Devices; OpPairRevoke unpairs Device ("" = all)
+	// and answers Revoked. A refusal is OpRefused with the reason.
+	OpPairCode   = "pair_code"
+	OpPairRedeem = "pair_redeem"
+	OpPairCheck  = "pair_check"
+	OpPairList   = "pair_list"
+	OpPairRevoke = "pair_revoke"
 )
 
 // Msg is every message in both directions; unused fields are omitted.
@@ -105,6 +117,21 @@ type Msg struct {
 	// back, so the runner knows to call the adapter's resume instead of
 	// starting anything.
 	Resume bool `json:"resume,omitempty"`
+	// Pairing (the OpPair* ops). Code and Token are secrets: never logged.
+	Code       string         `json:"code,omitempty"`
+	Token      string         `json:"token,omitempty"`
+	DeviceName string         `json:"device_name,omitempty"`
+	Device     string         `json:"device,omitempty"`
+	Devices    []PairedDevice `json:"devices,omitempty"`
+	Paired     bool           `json:"paired,omitempty"`
+	Revoked    int            `json:"revoked,omitempty"`
+}
+
+// PairedDevice is one browser paired to act on the node.
+type PairedDevice struct {
+	ID      string    `json:"id"`
+	Name    string    `json:"name"`
+	Created time.Time `json:"created"`
 }
 
 // Event is one thing berthd saw or did. Seq is gap-free and increases by one,
@@ -259,6 +286,7 @@ type Claim struct {
 	Procs   string `json:"procs,omitempty"` // the matched process names, for people
 	Lease   string `json:"lease,omitempty"` // hold: the lease it holds or waits on
 	Used    uint64 `json:"used,omitempty"`  // track: card memory under the matches
+	GTTUsed uint64 `json:"gtt_used,omitempty"`
 }
 
 // PriorityStatus is how the node ranks engines when two at one priority
@@ -302,6 +330,15 @@ type GPU struct {
 	Free      uint64  `json:"free"`
 	Baseline  uint64  `json:"baseline"`
 	Age       float64 `json:"age_seconds"`
+	// UnobservedPIDs are same-user processes whose DRM fdinfo is inaccessible.
+	// Their unknown allocation remains in Baseline; absence is not a release.
+	UnobservedPIDs []int `json:"unobserved_pids,omitempty"`
+	// On APUs Total/Used/Free describe the reserved-UMA VRAM pool only.
+	// GTT capacity is shared system RAM, never additional dedicated VRAM.
+	APU         bool   `json:"apu,omitempty"`
+	GTTTotal    uint64 `json:"gtt_total,omitempty"`
+	GTTUsed     uint64 `json:"gtt_used,omitempty"`
+	GTTBaseline uint64 `json:"gtt_baseline,omitempty"`
 
 	// Telemetry as the driver reports it; -1 = not reported.
 	Util       float64 `json:"util_pct"`
@@ -317,14 +354,15 @@ type GPU struct {
 
 // Host is the machine the node runs on.
 type Host struct {
-	Supported bool       `json:"supported"`
-	CPU       float64    `json:"cpu_pct"`
-	Cores     int        `json:"cores"`
-	RAMTotal  uint64     `json:"ram_total"`
-	RAMUsed   uint64     `json:"ram_used"`
-	SwapTotal uint64     `json:"swap_total"`
-	SwapUsed  uint64     `json:"swap_used"`
-	Load      [3]float64 `json:"load"`
+	Supported bool    `json:"supported"`
+	CPU       float64 `json:"cpu_pct"`
+	Cores     int     `json:"cores"`
+	RAMTotal  uint64  `json:"ram_total"`
+	RAMUsed   uint64  `json:"ram_used"`
+	SwapTotal uint64  `json:"swap_total"`
+	SwapUsed  uint64  `json:"swap_used"`
+	// Load is absent where the platform has no load averages (Windows).
+	Load *[3]float64 `json:"load,omitempty"`
 }
 
 // Sample is one point of the node's in-memory history (the graphs).
@@ -388,6 +426,8 @@ type Lease struct {
 	ContainerName string  `json:"container_name,omitempty"`
 	GPUPIDs       []int   `json:"gpu_pids,omitempty"`
 	Used          uint64  `json:"used"`
+	GTTUsed       uint64  `json:"gtt_used,omitempty"`
+	GTTContested  uint64  `json:"gtt_contested,omitempty"`
 	Contested     uint64  `json:"contested,omitempty"`
 	Age           float64 `json:"age_seconds"`
 	Pinned        bool    `json:"pinned,omitempty"` // never drained: a hold, a claim, berth run --pinned
@@ -411,6 +451,7 @@ type Squatter struct {
 	PIDStart uint64 `json:"pid_start,omitempty"`
 	Name     string `json:"name"`
 	Used     uint64 `json:"used"`
+	GTTUsed  uint64 `json:"gtt_used,omitempty"`
 	Run      string `json:"unprotected_run,omitempty"`
 	// Container is the runtime container the process holds memory in,
 	// shortened to the 12 characters people quote; empty for a host
@@ -436,6 +477,10 @@ type Engine struct {
 	Metrics    EngineMetrics `json:"metrics"`
 	DecodeTPS  float64       `json:"decode_tps"`
 	PrefillTPS float64       `json:"prefill_tps"`
+	// MetricsReported is true when this read got real counters from the
+	// engine. A zero rate beside it is an idle engine; without it the
+	// engine never answered its metrics endpoint and the rate is unknown.
+	MetricsReported bool `json:"metrics_reported"`
 	// Window is the engine-level context budget: the /props n_ctx for the
 	// llama.cpp family, the max model window for llama-swap. 0 = not reported.
 	Window int `json:"window,omitempty"`

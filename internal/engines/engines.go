@@ -256,6 +256,7 @@ func (w *Watcher) read(ctx context.Context, e config.Engine) proto.Engine {
 		// A build without /props, or that 501s on /slots (KoboldCpp), stays
 		// up with a zero window or no slots; a down engine fetches neither.
 		if err == nil {
+			out.MetricsReported = true
 			if b, perr := w.get(ctx, base+"/props"); perr == nil {
 				var p struct {
 					NCtx int `json:"n_ctx"`
@@ -427,6 +428,7 @@ func (w *Watcher) custom(ctx context.Context, base string, e config.Engine, out 
 				PromptSeconds: f("prompt_seconds"), OutputSeconds: f("output_seconds"),
 				Processing: f("processing"), Waiting: f("waiting"),
 			}
+			out.MetricsReported = true
 		}
 	}
 	if e.Models != "" {
@@ -554,6 +556,7 @@ func (w *Watcher) llamaSwap(ctx context.Context, base string, out *proto.Engine)
 		if err == nil {
 			// an upstream without /metrics still counts as loaded
 			out.Metrics = out.Metrics.Add(mm)
+			out.MetricsReported = true
 		}
 		// Best-effort per model: the proxy's context window and its live KV
 		// slots, tagged with the model they sit on. A 404/501 on either
@@ -689,6 +692,7 @@ func (w *Watcher) strata(ctx context.Context, base, keyEnv string, out *proto.En
 	if err := json.Unmarshal(b, &m); err != nil {
 		return nil
 	}
+	out.MetricsReported = true
 	switch {
 	case m.Live.Running != nil:
 		out.Metrics.Processing = float64(*m.Live.Running)

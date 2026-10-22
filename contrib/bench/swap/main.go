@@ -54,16 +54,17 @@ const prompt = "Reply with exactly one line: swap bench ok"
 const requestTimeout = 25 * time.Minute
 
 type flags struct {
-	gateway  string
-	modelA   string
-	modelB   string
-	cycles   int
-	comfy    string
-	leak     int
-	gwPID    int
-	gpuIndex int
-	keyFile  string
-	jsonOut  bool
+	gateway    string
+	modelA     string
+	modelB     string
+	cycles     int
+	comfy      string
+	leak       int
+	gwPID      int
+	gpuIndex   int
+	gpuBackend string
+	keyFile    string
+	jsonOut    bool
 }
 
 func parseFlags() (flags, error) {
@@ -76,6 +77,7 @@ func parseFlags() (flags, error) {
 	leak := fs.Int("leak", 0, "run N A-B cycles and print VRAM after drain and the gateway RSS at cycle 1 and N")
 	gwPID := fs.Int("gateway-pid", 0, "the gateway's PID, for the RSS reading of -leak (Linux)")
 	gpuIndex := fs.Int("gpu-index", 0, "the card the bench reads")
+	gpuBackend := fs.String("gpu-backend", "auto", "GPU probe: auto, nvidia or amd (AMD index: DRM cardN)")
 	key := fs.String("key", "", "the gateway's API key file (default: the berth api.key)")
 	jsonOut := fs.Bool("json", false, "print the raw samples as JSON")
 	fs.Usage = func() {
@@ -87,7 +89,10 @@ func parseFlags() (flags, error) {
 		}
 		return flags{}, err
 	}
-	f := flags{*gateway, *a, *b, *cycles, *comfy, *leak, *gwPID, *gpuIndex, *key, *jsonOut}
+	f := flags{*gateway, *a, *b, *cycles, *comfy, *leak, *gwPID, *gpuIndex, *gpuBackend, *key, *jsonOut}
+	if err := gpu.ValidateSelection(f.gpuBackend, f.gpuIndex); err != nil {
+		return f, err
+	}
 	if f.comfy != "" && f.leak > 0 {
 		return f, fmt.Errorf("-comfy and -leak do not combine: the leak check reads A-B cycles")
 	}
@@ -195,17 +200,21 @@ func newRun(f flags) (*run, error) {
 	if len(key) < 16 {
 		return nil, fmt.Errorf("%s holds no usable key (under 16 characters)", keyFile)
 	}
+	probe, err := gpu.Open(gpu.Options{Backend: f.gpuBackend, Index: f.gpuIndex})
+	if err != nil {
+		return nil, err
+	}
 	r := &run{
 		f:     f,
 		key:   key,
 		http:  &http.Client{},
-		probe: gpu.NvidiaSMI{Index: f.gpuIndex},
+		probe: probe,
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	snap, err := r.probe.Read(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("read the card: %v (is nvidia-smi on PATH?)", err)
+		return nil, fmt.Errorf("read the card: %w", err)
 	}
 	r.baseline = snap.Used
 	r.card = snap.Name

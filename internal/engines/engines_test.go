@@ -63,6 +63,41 @@ func TestLlamaSwapFollowsUpstreamsAndComputesRates(t *testing.T) {
 	if e.DecodeTPS < 99.9 || e.DecodeTPS > 100.1 {
 		t.Fatalf("decode = %v t/s, want 100", e.DecodeTPS)
 	}
+	if !e.MetricsReported {
+		t.Fatal("metrics_reported = false with a serving upstream")
+	}
+}
+
+// llama-swap starts llama-server without --metrics, so the proxy answers 501:
+// the engine stays up with its model listed and the counters read unreported,
+// never a measured zero.
+func TestLlamaSwapWithoutMetrics(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/metrics" {
+			w.WriteHeader(http.StatusNotImplemented)
+			fmt.Fprint(w, "This server does not support metrics endpoint. Start it with --metrics")
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer upstream.Close()
+	swap := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/running" {
+			http.NotFound(w, r)
+			return
+		}
+		fmt.Fprintf(w, `{"running":[{"model":"Qwen3-8B","state":"ready","proxy":%q}]}`, upstream.URL)
+	}))
+	defer swap.Close()
+	w := &Watcher{Engines: []config.Engine{{Name: "llama-swap", Type: "llama-swap", URL: swap.URL}}}
+	w.Poll(context.Background())
+	e := w.Snapshot()[0]
+	if !e.Up || len(e.Models) != 1 || e.Models[0].Name != "Qwen3-8B" {
+		t.Fatalf("engine = %+v", e)
+	}
+	if e.Metrics.OutputTokens != 0 || e.MetricsReported {
+		t.Fatalf("metrics = %+v reported = %v, want zero counters unreported", e.Metrics, e.MetricsReported)
+	}
 }
 
 func TestOllamaReportsModelsAsEngineClaims(t *testing.T) {
@@ -165,6 +200,9 @@ func TestCustomMap(t *testing.T) {
 	if e.Metrics.OutputTokens != 42 || e.Metrics.Waiting != 3 {
 		t.Fatalf("metrics = %+v", e.Metrics)
 	}
+	if !e.MetricsReported {
+		t.Fatal("metrics_reported = false after a mapped metrics read")
+	}
 }
 
 // llamacppSlotsFake serves the llama.cpp family's three endpoints: the
@@ -196,6 +234,9 @@ func TestLlamaCppReadsPropsAndSlots(t *testing.T) {
 	e := w.Snapshot()[0]
 	if !e.Up || e.Error != "" {
 		t.Fatalf("engine = %+v", e)
+	}
+	if !e.MetricsReported {
+		t.Fatal("metrics_reported = false after /metrics answered")
 	}
 	if e.Window != 8192 {
 		t.Fatalf("window = %d, want 8192", e.Window)
@@ -400,6 +441,9 @@ func TestStrataReadsHealthAndMetrics(t *testing.T) {
 	if e.Metrics.OutputTokens != 1500 || e.Metrics.Processing != 1 || e.Metrics.Waiting != 2 {
 		t.Fatalf("metrics = %+v", e.Metrics)
 	}
+	if !e.MetricsReported {
+		t.Fatal("metrics_reported = false with serving /metrics")
+	}
 	if e.DecodeTPS < 19.9 || e.DecodeTPS > 20.1 {
 		t.Fatalf("decode = %v t/s, want 20", e.DecodeTPS)
 	}
@@ -435,5 +479,8 @@ func TestStrataKeyedInstallStaysUp(t *testing.T) {
 	// the window still parses from /health alone while /metrics is a 401
 	if e.Window != 16384 || e.Models[0].Window != 16384 {
 		t.Fatalf("windows: engine %d model %d, want 16384", e.Window, e.Models[0].Window)
+	}
+	if e.MetricsReported {
+		t.Fatal("metrics_reported = true while /metrics is refused")
 	}
 }

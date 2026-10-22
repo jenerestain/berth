@@ -69,6 +69,15 @@ func serviceInstall(ctx context.Context, ops serviceOps, unitsList []Unit, dryRu
 		if err != nil {
 			return nil, Systemf("%s: %v", u.Name, err)
 		}
+		if u.Name == "berthd" {
+			lines := strings.Split(text, "\n")
+			for i, line := range lines {
+				if strings.HasPrefix(line, "ExecStart=") {
+					lines[i] = "ExecStart=" + strings.Join(u.Exec, " ")
+				}
+			}
+			text = strings.Join(lines, "\n")
+		}
 		row := serviceUnit{Unit: u.Name, Target: target, Content: text}
 		if dryRun {
 			row.Action = "would be written"

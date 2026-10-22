@@ -310,6 +310,24 @@ func TestVfioStatusReportsPassthroughWithAnAddress(t *testing.T) {
 	}
 }
 
+// TestVfioStatusWithAnAddressStillAsksBerthd: an address skips nvidia-smi,
+// which cannot see a card on vfio-pci, but berthd still answers and its view
+// is shown; it is not reported unreachable.
+func TestVfioStatusWithAnAddressStillAsksBerthd(t *testing.T) {
+	isolate(t)
+	sock, _ := startVfioDaemon(t)
+	tr := newVfioTree(t)
+	tr.function(vfioAddr, "vfio-pci")
+	tr.group()
+	code, out, errOut := runVfioStatusIn(t, tr, tr.smi(), "--socket", sock, vfioAddr)
+	if code != ExitOK {
+		t.Fatalf("exit = %d, want 0 (stderr %q)", code, errOut)
+	}
+	if strings.Contains(out, "unreachable") {
+		t.Errorf("berthd answers but the report says unreachable: %q", out)
+	}
+}
+
 // TestVfioRunRefusesIOMMUOff: exit 1 with the hint, and nothing is acquired.
 func TestVfioRunRefusesIOMMUOff(t *testing.T) {
 	isolate(t)
@@ -631,4 +649,23 @@ func TestVfioRunScriptExit127StillWaitsForTheCard(t *testing.T) {
 		t.Fatalf("exit = %d, want 127 after the card-back check (stderr %q)", code, errOut)
 	}
 	waitUntil(t, none(b))
+}
+
+// TestVfioStatusNamesTheVMNotAStaleReading: while berthd reports the card in a
+// VM, its memory figures are the last reading before the hold; the report
+// says where the card is instead of printing them as current.
+func TestVfioStatusNamesTheVMNotAStaleReading(t *testing.T) {
+	var out bytes.Buffer
+	c := &Context{Out: &out, Err: io.Discard, Format: FormatHuman, Style: newStyle(&out), errStyle: newStyle(io.Discard)}
+	doc := vfioStatusDoc{Addr: vfioAddr, IOMMU: true, Passed: true,
+		Group: []vfio.Function{{Addr: vfioAddr, Driver: "vfio-pci"}},
+		Berthd: &vfioBerthdDoc{Reachable: true, Passthrough: "passthrough",
+			GPU: &vfioGPUDoc{Index: 0, Name: "RTX 4090", Used: 4 << 20, Total: 24 << 30, Age: 1400}}}
+	if err := (vfioStatusView{doc}).Human(c, true); err != nil {
+		t.Fatal(err)
+	}
+	got := out.String()
+	if !strings.Contains(got, "passed through to a VM (vfio-pci) (last memory reading 1400 s ago)") || strings.Contains(got, "used of") {
+		t.Errorf("berthd's line = %q, want the VM state and no current-looking memory figure", got)
+	}
 }

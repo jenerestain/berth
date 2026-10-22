@@ -111,6 +111,7 @@ func (w *Watcher) openAIWithProm(ctx context.Context, base, keyEnv, prefix strin
 	}
 	if m, ok := w.promMetrics(ctx, base+"/metrics", keyEnv, prefix, names); ok {
 		out.Metrics = m
+		out.MetricsReported = true
 	}
 	return nil
 }
@@ -240,6 +241,7 @@ func (w *Watcher) freetoken(ctx context.Context, base, keyEnv string, out *proto
 	if err := json.Unmarshal(b, &body); err != nil {
 		return fmt.Errorf("/v1/stats: %w", err)
 	}
+	out.MetricsReported = true
 	if inner, ok := body["stats"].(map[string]any); ok {
 		body = inner
 	}

@@ -28,6 +28,7 @@ type fakeNode struct {
 	sock      string
 	lastEvent uint64
 	evts      []proto.Event
+	st        *proto.Status // canned OpStatus reply when set; otherwise an empty status
 
 	ln      net.Listener
 	mu      sync.Mutex
@@ -79,7 +80,10 @@ func (f *fakeNode) serveConn(c net.Conn) {
 	}
 	switch m.Op {
 	case proto.OpStatus:
-		st := &proto.Status{API: proto.APIVersion, LastEvent: f.lastEvent}
+		st := f.st
+		if st == nil {
+			st = &proto.Status{API: proto.APIVersion, LastEvent: f.lastEvent}
+		}
 		_ = conn.Send(proto.Msg{Op: proto.OpStatus, Status: st})
 	case proto.OpEvents:
 		for i := range f.evts {

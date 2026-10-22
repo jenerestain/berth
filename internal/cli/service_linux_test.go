@@ -139,6 +139,20 @@ func TestServiceInstallLinuxDryRun(t *testing.T) {
 	}
 }
 
+func TestServiceInstallLinuxAMDSelection(t *testing.T) {
+	ops, calls := fakeOps(t, t.TempDir(), nil)
+	doc, e := serviceInstall(context.Background(), ops, serviceUnitsForGPU("/opt/berth", false, false, "amd", 10), true)
+	if e != nil {
+		t.Fatal(e)
+	}
+	if !strings.Contains(doc.Units[0].Content, "ExecStart=/opt/berth daemon --gpu 10 --poll 2s --gpu-backend amd") {
+		t.Fatal(doc.Units[0].Content)
+	}
+	if len(*calls) != 0 {
+		t.Fatal("dry run changed services")
+	}
+}
+
 func TestServiceInstallLinuxCommandFails(t *testing.T) {
 	dir := t.TempDir()
 	const exe = "/opt/berth/berth"

@@ -37,8 +37,29 @@ Then, on the iPhone:
 3. Name it (`berth` works) and tap **Add**.
 
 The Home Screen icon is Pilot, the harbor master llama, and the name under it is `berth`.
-The page stays read-only. The harbor has no login, so publish it only on a tailnet or a home
-network you trust.
+Reading the harbor needs no login, so publish it only on a tailnet or a home network you trust.
+
+### Pair a device
+
+Switching and stopping engines from the harbor will need a paired device. Pair one from the
+Berth machine:
+
+```sh
+berth pair --url https://<machine>.<tailnet>.ts.net
+```
+
+It prints a link and the same link as a QR code. Scan it with the phone, or open the link,
+and tap **Pair this device**. The browser keeps a device cookie for a year: `HttpOnly`,
+`SameSite=Lax`, and `Secure` over https. The code works once, for 15 minutes, and
+opening the link alone (a chat app's preview, say) does not use it. berthd keeps only hashes
+of codes and device tokens, in `~/.local/state/berth/harbor-devices.json`.
+
+- `berth pair --list` shows the paired devices.
+- `berth pair --revoke ID` unpairs one; `--revoke-all` unpairs every device.
+
+Anyone who opens a link first pairs their browser, so send it only to yourself. Over plain
+http on a LAN, the cookie crosses the network in the clear; use `tailscale serve` (https)
+for a phone.
 
 ## Visibility
 - **Stowaways:** every process holding VRAM without a lease, with memory, identity and
@@ -74,7 +95,11 @@ network you trust.
   its own probe would block the driver switch; it reads the driver from sysfs instead. Nothing new is
   granted while the card is away, and each waiter's reason says so ("gpu0 is passed through to a VM
   (vfio-pci); it comes back when the VM's hold ends"). A card switched by hand, with no hold, shows the
-  same state instead of a probe-failed warning.
+  same state instead of a probe-failed warning. In the harbor, a GPU IN VM tag sits beside the state pill
+  on every tab. The card's panel shows the passthrough state in place of its memory figures, with the last
+  reading greyed and labelled with its age. The departures board marks the hold IN VM, the log names each
+  change in plain words, and the tide leaves the session as a gap. Engines stopped for the session do not
+  turn the state DEGRADED.
 - **Alerts:** one threshold table in `berth.toml` (`[alerts]`): warn and crit per key
   (`queue`, `ttft`, `tpot`, `p95`, `cache`, `reingest`, `vram`, `temp`, `power`, `kv`).
   The node evaluates it on its 5 s sample cycle, fires a desktop notification and webhook

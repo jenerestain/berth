@@ -103,9 +103,7 @@ func (r *Reader) Read() Stats {
 				idle += vals[4] // iowait
 			}
 			r.mu.Lock()
-			if r.tot > 0 && tot > r.tot {
-				s.CPU = 100 * (1 - float64(idle-r.idle)/float64(tot-r.tot))
-			}
+			s.CPU = cpuPct(r.idle, r.tot, idle, tot)
 			r.idle, r.tot = idle, tot
 			r.mu.Unlock()
 		} else if strings.HasPrefix(line, "cpu") {
@@ -123,9 +121,11 @@ func (r *Reader) Read() Stats {
 	}
 	if b, err := os.ReadFile(r.root() + "/loadavg"); err == nil {
 		f := strings.Fields(string(b))
+		var load [3]float64
 		for i := 0; i < 3 && i < len(f); i++ {
-			s.Load[i], _ = strconv.ParseFloat(f[i], 64)
+			load[i], _ = strconv.ParseFloat(f[i], 64)
 		}
+		s.Load = &load
 	}
 	return s
 }

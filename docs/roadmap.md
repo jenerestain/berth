@@ -60,7 +60,7 @@ Not started, and in no release yet: `berth fit` and scenes, so engines that fit 
 
 | Release | What it brings |
 |---|---|
-| v0.4 | AMD on Linux, through a vendor-neutral probe; the Windows node out of experimental (a packaged installer, a locked-down control pipe) |
+| v0.4 | Broader AMD Linux hardware validation beyond the experimental RDNA3/RDNA4 probe; the Windows node out of experimental (a packaged installer, a locked-down control pipe) |
 | v0.4 | Proxmox in every common layout. Berth detects whether it runs on a Proxmox host, in an LXC container or in a VM and says where it belongs (`berth env`). Engines in LXC containers lease the host's card and show by container, and a system service covers hosts without a user session |
 | v0.4 | GPU passthrough to a VM (VFIO), experimental. `berth vfio run` drains the card and proves nothing holds it before your own script switches the driver, and the card shows as passed through until it comes back |
 | v0.5 | Multi-GPU scheduling, including one lease across two cards for engines that split a model |

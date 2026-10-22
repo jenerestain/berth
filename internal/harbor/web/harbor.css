@@ -395,6 +395,9 @@ body.mode-basic .adv-only { display: none !important; }
 /* the demo page has no live node, so the state pill says DEMO */
 .conn.state.state-demo { color: var(--strip-demo-ink); border-color: var(--magenta-dim); }
 .conn.state.state-demo .dot { background: var(--magenta); }
+/* the GPU IN VM tag rides beside the state pill on every tab: the governed card
+   is bound to vfio-pci, a known state, not a fault */
+.conn.vm-tag { color: var(--amber); border-color: var(--amber-dim); background: var(--amber-wash); }
 
 /* ---------- the status indicator ---------- */
 /* One vocabulary for every state word: an 8px shape in the word's own colour,
@@ -917,6 +920,11 @@ body.ready #panel-engines > :nth-child(n+2) { animation-delay: 60ms; }
 .berth-name { font-size: var(--fs-small); color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .berth-note { font-size: var(--fs-micro); letter-spacing: 1px; color: var(--dim); }
 .berth.is-scheduled .berth-note { color: var(--cyan); }
+/* the card in a VM: the passthrough word reads as the card's state, and the
+   last memory reading beside it is greyed and labelled as its age, never current */
+.berth.is-vfio .memnums { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.berth.is-vfio .memnums .n:last-child .v,
+.berth.is-vfio .memnums .n:last-child .l { color: var(--dim-2); }
 .membar {
   display: flex;
   height: 24px;
@@ -1874,3 +1882,13 @@ body.reduced-motion .si-live, body.reduced-motion .si-connecting, body.reduced-m
   .panel { break-inside: avoid; box-shadow: none; }
   .log { max-height: none; overflow: visible; }
 }
+
+/* The pair page (GET /pair): one card, one button, readable on a phone. */
+.pair { max-width: 26rem; margin: 12vh auto; padding: 1.5rem; background: var(--panel); border: 1px solid var(--hair); border-radius: 8px; }
+.pair h1 { margin: 0 0 0.5rem; font-size: 1.25rem; color: var(--ink-strong); }
+.pair p { color: var(--dim); line-height: 1.5; }
+.pair form { display: grid; gap: 0.75rem; margin: 1rem 0; }
+.pair label { display: grid; gap: 0.35rem; color: var(--ink); }
+.pair input { padding: 0.6rem; font-size: 1rem; color: var(--ink-strong); background: var(--panel-3); border: 1px solid var(--edge); border-radius: 6px; }
+.pair button { padding: 0.75rem; font-size: 1rem; color: var(--ink-strong); background: var(--cyan-deep); border: 1px solid var(--cyan-dim); border-radius: 6px; }
+.pair a { color: var(--cyan); }

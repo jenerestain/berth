@@ -216,13 +216,13 @@ every route needs the API key (berth key prints it).`,
 	},
 	{
 		Name:    "harbor",
-		Summary: "the web UI, read-only; loopback by default",
+		Summary: "the web UI; loopback by default",
 		Args:    "[flags]",
 		Help: `Serve the read-only web UI: the card and its leases, the engines, the event
 log, the request KPIs and the tide of card memory over time, persisted in
 SQLite. It listens on loopback by default; a non-loopback --listen address is
-your explicit opt-in to expose it, and there is no authentication in this
-release.`,
+your explicit opt-in to expose it. Reading needs no login; berth pair pairs a
+device for the actions.`,
 		Run: runHarbor,
 	},
 	{
@@ -486,6 +486,22 @@ why, what holds memory without a lease, the engines found, and the collisions
 board. Read only: nothing here changes the node.`,
 		Formats: []Format{FormatHuman, FormatJSON, FormatYAML},
 		Run:     runStatus,
+	},
+	{
+		Name:    "pair",
+		Summary: "let a phone or browser switch and stop engines from the harbor",
+		Args:    "[--url URL] [--list] [--revoke ID] [--revoke-all]",
+		Help: `Print a one-time link, and its QR code, that pairs a device with this node's
+harbor. Open it on the phone (or scan the code) and tap Pair this device: the
+browser keeps a device cookie for a year, and the harbor lets it switch and
+stop engines. Reading the harbor needs no pairing.
+
+The code works once, for 15 minutes. --url is the harbor's address as the
+device reaches it, such as https://box.tailnet.ts.net behind tailscale serve.
+--list shows the paired devices; --revoke ID unpairs one and --revoke-all
+unpairs every device.`,
+		Formats: []Format{FormatHuman, FormatJSON, FormatYAML},
+		Run:     runPair,
 	},
 	{
 		Name:    "stop",

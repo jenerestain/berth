@@ -223,17 +223,22 @@ export function sparkline(series, opts = {}) {
       if (sig === ctl._sig) return;
       ctl._sig = sig;
       let lo = o.min;
-      let hi = o.max == null ? Math.max(...data, o.min) : o.max;
+      let hi = o.max == null ? Math.max(...data.filter((v) => v != null), o.min) : o.max;
       if (hi <= lo) hi = lo + 1;
       const step = (w - o.pad * 2) / (n - 1);
       const y = (v) => h - o.pad - ((v - lo) / (hi - lo)) * (h - o.pad * 2);
+      // null = no data (the card was in a VM): the run breaks, it never
+      // draws as zero
       let d = "";
+      let run = false;
       for (let i = 0; i < n; i++) {
+        if (data[i] == null) { run = false; continue; }
         const x = o.pad + i * step;
-        d += (i === 0 ? "M" : "L") + x.toFixed(2) + " " + y(data[i]).toFixed(2);
+        d += (run ? "L" : "M") + x.toFixed(2) + " " + y(data[i]).toFixed(2);
+        run = true;
       }
       line.setAttribute("d", d);
-      if (o.area) area.setAttribute("d", d + "L" + (o.pad + (n - 1) * step).toFixed(2) + " " + (h - o.pad) + "L" + o.pad + " " + (h - o.pad) + "Z");
+      if (o.area && !data.some((v) => v == null)) area.setAttribute("d", d + "L" + (o.pad + (n - 1) * step).toFixed(2) + " " + (h - o.pad) + "L" + o.pad + " " + (h - o.pad) + "Z");
       else area.setAttribute("d", "");
     },
   };
@@ -402,7 +407,7 @@ export function stackedArea(data, opts = {}) {
     const n = t.length;
     if (n < 2) { gBands.replaceChildren(); gGrid.replaceChildren(); gEvents.replaceChildren(); frame.clear(); state = null; return; }
     const total = data.total || 0;
-    state = { t, t0: t[0], t1: t[n - 1], total, series: data.series || [], events: data.events || [] };
+    state = { t, t0: t[0], t1: t[n - 1], total, series: data.series || [], events: data.events || [], holes: data.holes || [] };
     // y grid in the svg, its numbers, the x times and the total in the overlay
     gGrid.replaceChildren();
     frame.clear();
@@ -422,30 +427,37 @@ export function stackedArea(data, opts = {}) {
     totalLine.setAttribute("y1", gyTotal);
     totalLine.setAttribute("y2", gyTotal);
     frame.axisX("TOTAL " + (Math.round(total * 10) / 10) + "G", padL + 4, gyTotal - 4, "total-label");
-    // stacked bands, bottom to top
+    // stacked bands, bottom to top. A hole (the card was in a VM, no data)
+    // breaks every band: each gap-free run of samples closes over itself, so
+    // the gap reads as a gap and no frozen reading draws across it.
     gBands.replaceChildren();
     const series = state.series;
+    const hole = (i) => series.some((b) => (b.data || [])[i] == null);
+    const runs = [];
+    let runStart = -1;
+    for (let i = 0; i < n; i++) {
+      if (!hole(i) && runStart < 0) runStart = i;
+      if (hole(i) && runStart >= 0) { runs.push([runStart, i - 1]); runStart = -1; }
+    }
+    if (runStart >= 0) runs.push([runStart, n - 1]);
     const cum = new Array(n).fill(0);
-    const lower = new Array(n).fill(0);
     for (const band of series) {
       const dataArr = band.data || [];
-      const lo = new Array(n).fill(0);
-      for (let i = 0; i < n; i++) {
-        lo[i] = cum[i];
-        cum[i] += dataArr[i] || 0;
-      }
-      let d = "";
-      for (let i = 0; i < n; i++) {
-        const yTop = padT + plotH - (cum[i] / (total || 1)) * plotH;
-        d += (i === 0 ? "M" : "L") + xOf(t[i]).toFixed(1) + " " + yTop.toFixed(1);
-      }
-      for (let i = n - 1; i >= 0; i--) {
-        const yBot = padT + plotH - (lo[i] / (total || 1)) * plotH;
-        d += "L" + xOf(t[i]).toFixed(1) + " " + yBot.toFixed(1);
-      }
-      d += "Z";
       const isSquat = band.kind === "squat";
       const isBase = band.kind === "baseline";
+      let d = "";
+      const edge = (lo, hi) => { // one gap-free run: top edge forward, bottom edge back, closed
+        let p = "";
+        for (let i = lo; i <= hi; i++) {
+          p += (i === lo ? "M" : "L") + xOf(t[i]).toFixed(1) + " " + (padT + plotH - (cum[i] / (total || 1)) * plotH).toFixed(1);
+        }
+        for (let i = hi; i >= lo; i--) {
+          p += "L" + xOf(t[i]).toFixed(1) + " " + (padT + plotH - ((cum[i] - (dataArr[i] || 0)) / (total || 1)) * plotH).toFixed(1);
+        }
+        return p + "Z";
+      };
+      for (let i = 0; i < n; i++) cum[i] += dataArr[i] || 0;
+      for (const [lo, hi] of runs) d += edge(lo, hi);
       const path = S("path", { d, "vector-effect": "non-scaling-stroke" });
       path.style.fill = isSquat ? "url(#" + pid + ")" : band.color || PAL.baseline;
       // translucent bands with a crisp edge read as layers, not slabs of paint
@@ -486,6 +498,12 @@ export function stackedArea(data, opts = {}) {
       cross.setAttribute("x1", px);
       cross.setAttribute("x2", px);
       cross.setAttribute("visibility", "visible");
+      if (state.holes[idx]) {
+        const html = tipBox(tipRow(o.fmtTip(state.t[idx]), "", null));
+        html.append(tipRow("", "no data, the card was in a VM", null));
+        showTip(tip, wrap, ev, html);
+        return;
+      }
       let used = 0;
       const html = tipBox(tipRow(o.fmtTip(state.t[idx]), "", null));
       for (const band of state.series) {

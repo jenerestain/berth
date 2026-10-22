@@ -1,5 +1,6 @@
 // The gui plane's index: every engine in berth.toml as one row, its live
-// state and one button per engine: Launch, Launching... then Open.
+// state and one button per engine: Launch, Launching... then Open, or
+// Running for an engine with no web UI.
 (() => {
   const rows = [...document.querySelectorAll(".row[data-name]")];
   const gw = document.getElementById("gw");
@@ -30,6 +31,11 @@
     if (!btn) return; // no start command: nothing to push
     switch (s.state) {
       case "up":
+        if (!li.dataset.gui) {
+          btn.textContent = "Running";
+          btn.disabled = true;
+          break;
+        }
         if (launched.has(s.name)) {
           location.replace(li.dataset.gui); // this tab launched it: go there
           return;
@@ -63,7 +69,13 @@
       try {
         const r = await fetch("/gui/" + encodeURIComponent(li.dataset.name) + "/wake", { method: "POST" });
         // The answer names no row (it is the engine's state); this tab knows which.
-        if (r.ok) showRow({ name: li.dataset.name, ...(await r.json()) });
+        const body = await r.json();
+        if (r.ok) {
+          showRow({ name: li.dataset.name, ...body });
+        } else {
+          launched.delete(li.dataset.name);
+          showRow({ name: li.dataset.name, state: "failed", message: li.dataset.name + " did not start", detail: body.error?.message || "" });
+        }
       } catch {
         // The gateway is not answering; the line under the heading says it.
       }

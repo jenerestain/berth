@@ -101,6 +101,16 @@ func TestServiceUnits(t *testing.T) {
 	}
 }
 
+func TestServiceGPUSelection(t *testing.T) {
+	units := serviceUnitsForGPU("/opt/berth", true, true, "amd", 10)
+	if got := strings.Join(units[0].Exec, " "); got != "/opt/berth daemon --gpu 10 --poll 2s --gpu-backend amd" {
+		t.Fatal(got)
+	}
+	if strings.Contains(strings.Join(units[1].Exec, " "), "gpu") || strings.Contains(strings.Join(units[2].Exec, " "), "gpu") {
+		t.Fatal("GPU flags leaked to gateway or harbor")
+	}
+}
+
 func TestResolveListen(t *testing.T) {
 	cases := []struct {
 		flag, key, def, want string

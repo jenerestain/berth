@@ -207,6 +207,9 @@ func (g *Gateway) Handler() http.Handler {
 	mux.HandleFunc("GET /v1/berth/wait", g.wait)
 	mux.HandleFunc("GET /v1/berth/cost", g.cost)
 	mux.HandleFunc("POST /v1/berth/plan", g.plan)
+	mux.HandleFunc("GET /v1/berth/board", g.board)
+	mux.HandleFunc("POST /v1/berth/switch", g.apiSwitch)
+	mux.HandleFunc("POST /v1/berth/stop", g.apiStop)
 	for _, p := range []string{"/v1/chat/completions", "/v1/completions", "/v1/embeddings"} {
 		mux.HandleFunc("POST "+p, g.forward)
 	}
